@@ -219,50 +219,98 @@ async function saveProduct(
     });
     result.newPrices++;
 
-    // Create alerts for price changes
+    // Create alerts for price changes — only if we also sell this product
     if (lastPrice) {
-      const diff = parsed.price - lastPrice.price;
-      const pct = Math.abs(diff / lastPrice.price) * 100;
+      // Check if any own store has a price for this product
+      const { data: ownStores } = await supabase
+        .from('competitors')
+        .select('id, name')
+        .eq('is_own_store', true)
+        .eq('is_active', true);
 
-      if (pct >= 5) {
-        const type = diff < 0 ? 'PRICE_DROP' : 'PRICE_INCREASE';
-        const severity = pct >= 15 ? 'CRITICAL' : pct >= 10 ? 'HIGH' : 'MEDIUM';
+      const ownStoreIds = (ownStores || []).map((s: { id: string }) => s.id);
 
-        await supabase.from('alerts').insert({
-          type,
-          severity,
-          title: `${type === 'PRICE_DROP' ? 'Prissänkning' : 'Prishöjning'}: ${product.name}`,
-          message: `${parsed.brand} ${product.name} hos ${result.competitorName}: ${lastPrice.price} → ${parsed.price} SEK (${diff > 0 ? '+' : ''}${pct.toFixed(1)}%)`,
-          product_id: product.id,
-          competitor_id: competitorId,
-        });
-        result.alerts++;
+      // Get all variants for this product
+      const { data: productVariants } = await supabase
+        .from('product_variants')
+        .select('id')
+        .eq('product_id', product.id);
+
+      const allVariantIds = (productVariants || []).map((v: { id: string }) => v.id);
+
+      // Find our latest price for this product (any variant, any own store)
+      let ourPrice: number | null = null;
+      let ourStoreName = '';
+      if (allVariantIds.length > 0 && ownStoreIds.length > 0) {
+        const { data: ourPriceData } = await supabase
+          .from('product_prices')
+          .select('price, competitor_id')
+          .in('variant_id', allVariantIds)
+          .in('competitor_id', ownStoreIds)
+          .order('scraped_at', { ascending: false })
+          .limit(1)
+          .single();
+
+        if (ourPriceData) {
+          ourPrice = ourPriceData.price;
+          ourStoreName = (ownStores || []).find((s: { id: string }) => s.id === ourPriceData.competitor_id)?.name || '';
+        }
       }
 
-      // Stock change alert
-      if (lastPrice.in_stock !== parsed.inStock) {
-        await supabase.from('alerts').insert({
-          type: 'STOCK_CHANGE',
-          severity: 'MEDIUM',
-          title: `Lagerstatus ändrad: ${product.name}`,
-          message: `${product.name} hos ${result.competitorName}: ${parsed.inStock ? 'Åter i lager' : 'Slut i lager'}`,
-          product_id: product.id,
-          competitor_id: competitorId,
-        });
-        result.alerts++;
-      }
+      // Only create alerts if we sell this product
+      if (ourPrice !== null) {
+        const diff = parsed.price - lastPrice.price;
+        const pct = Math.abs(diff / lastPrice.price) * 100;
 
-      // Campaign detection
-      if (!lastPrice.original_price && parsed.originalPrice && parsed.originalPrice > parsed.price) {
-        await supabase.from('alerts').insert({
-          type: 'NEW_CAMPAIGN',
-          severity: 'HIGH',
-          title: `Ny kampanj: ${product.name}`,
-          message: `${product.name} hos ${result.competitorName}: ${parsed.originalPrice} → ${parsed.price} SEK`,
-          product_id: product.id,
-          competitor_id: competitorId,
-        });
-        result.alerts++;
+        if (pct >= 5) {
+          const type = diff < 0 ? 'PRICE_DROP' : 'PRICE_INCREASE';
+          const severity = pct >= 15 ? 'CRITICAL' : pct >= 10 ? 'HIGH' : 'MEDIUM';
+          const comparison = parsed.price < ourPrice
+            ? `(billigare än vårt pris ${ourPrice} SEK)`
+            : parsed.price > ourPrice
+            ? `(dyrare än vårt pris ${ourPrice} SEK)`
+            : `(samma som vårt pris)`;
+
+          await supabase.from('alerts').insert({
+            type,
+            severity,
+            title: `${type === 'PRICE_DROP' ? 'Prissänkning' : 'Prishöjning'}: ${product.name}`,
+            message: `${parsed.brand} ${product.name} hos ${result.competitorName}: ${lastPrice.price} → ${parsed.price} SEK (${diff > 0 ? '+' : ''}${pct.toFixed(1)}%) ${comparison}`,
+            product_id: product.id,
+            competitor_id: competitorId,
+          });
+          result.alerts++;
+        }
+
+        // Stock change alert
+        if (lastPrice.in_stock !== parsed.inStock) {
+          await supabase.from('alerts').insert({
+            type: 'STOCK_CHANGE',
+            severity: 'MEDIUM',
+            title: `Lagerstatus ändrad: ${product.name}`,
+            message: `${product.name} hos ${result.competitorName}: ${parsed.inStock ? 'Åter i lager' : 'Slut i lager'} (vårt pris: ${ourPrice} SEK via ${ourStoreName})`,
+            product_id: product.id,
+            competitor_id: competitorId,
+          });
+          result.alerts++;
+        }
+
+        // Campaign detection
+        if (!lastPrice.original_price && parsed.originalPrice && parsed.originalPrice > parsed.price) {
+          const comparison = parsed.price < ourPrice
+            ? `Vi är dyrare (${ourPrice} SEK)`
+            : `Vi är billigare (${ourPrice} SEK)`;
+
+          await supabase.from('alerts').insert({
+            type: 'NEW_CAMPAIGN',
+            severity: 'HIGH',
+            title: `Ny kampanj: ${product.name}`,
+            message: `${product.name} hos ${result.competitorName}: ${parsed.originalPrice} → ${parsed.price} SEK. ${comparison}`,
+            product_id: product.id,
+            competitor_id: competitorId,
+          });
+          result.alerts++;
+        }
       }
     }
   }
