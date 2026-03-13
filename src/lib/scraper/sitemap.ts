@@ -119,12 +119,12 @@ function isProductUrl(url: string, ownStore = false): boolean {
   // --- Store-specific patterns ---
 
   // KöpBarnvagn: /sv/artiklar/[product-name].html
-  // For own stores: accept ALL product pages under /artiklar/ (no keyword requirement)
+  // Own stores: accept any stroller/car seat product (no brand requirement, but must be relevant category)
   if (path.includes('/artiklar/') && path.endsWith('.html')) {
-    if (ownStore) return true;
-    const hasBrand = BRAND_KEYWORDS.some(b => filename.includes(b));
     const hasProduct = STROLLER_KEYWORDS.some(kw => filename.includes(kw)) ||
       CAR_SEAT_KEYWORDS.some(kw => filename.includes(kw));
+    if (ownStore) return hasProduct || BRAND_KEYWORDS.some(b => filename.includes(b));
+    const hasBrand = BRAND_KEYWORDS.some(b => filename.includes(b));
     return hasBrand || hasProduct;
   }
 
@@ -150,10 +150,10 @@ function isProductUrl(url: string, ownStore = false): boolean {
   // Flat URL stores (Bonti, BabySam, Babyland): /[product-slug] with 1 segment
   if (segments.length === 1) {
     const slug = segments[0].replace(/_/g, '-');
-    // Own stores: accept any slug that looks like a product (long enough, has hyphens)
-    if (ownStore && slug.length > 10 && slug.includes('-')) return true;
     const hasProductKeyword = [...STROLLER_KEYWORDS, ...CAR_SEAT_KEYWORDS].some(kw => slug.includes(kw));
     const hasBrand = BRAND_KEYWORDS.some(b => slug.includes(b));
+    // Own stores: accept product keyword OR brand (more lenient)
+    if (ownStore && slug.length > 10 && (hasProductKeyword || hasBrand)) return true;
     if (hasProductKeyword && slug.length > 15) return true;
     if (hasBrand && slug.length > 20 && !ACCESSORY_KEYWORDS.some(kw => slug.includes(kw))) return true;
     return false;
@@ -162,14 +162,12 @@ function isProductUrl(url: string, ownStore = false): boolean {
   // Generic: URL path contains an actual stroller/car-seat keyword (not just brand)
   // and has enough depth to be a product page
   if (segments.length >= 2) {
-    // Own stores: accept any deep link that looks like a product page
-    if (ownStore) {
-      const lastSegment = segments[segments.length - 1];
-      if (lastSegment.length > 10 && lastSegment.includes('-')) return true;
-    }
     const hasProductKeyword = [...STROLLER_KEYWORDS, ...CAR_SEAT_KEYWORDS].some(kw => path.includes(kw));
+    const hasBrand = BRAND_KEYWORDS.some(b => path.includes(b));
     const lastSegment = segments[segments.length - 1];
     const looksLikeProduct = lastSegment.length > 20 && lastSegment.includes('-');
+    // Own stores: accept product keyword OR brand with product-looking URL
+    if (ownStore && looksLikeProduct && (hasProductKeyword || hasBrand)) return true;
     if (hasProductKeyword && looksLikeProduct) return true;
   }
 

@@ -114,8 +114,8 @@ export async function scrapeCompetitor(competitorId: string): Promise<ScrapeResu
       return aHas - bHas;
     });
 
-    // Step 2: Scrape each URL (much higher limit for own stores to get ALL products)
-    const scrapeLimit = competitor.is_own_store ? 1000 : 150;
+    // Step 2: Scrape each URL (higher limit for own stores to get all products)
+    const scrapeLimit = competitor.is_own_store ? 500 : 150;
     for (const url of urls.slice(0, scrapeLimit)) {
       try {
         const html = await renderPage(url);
