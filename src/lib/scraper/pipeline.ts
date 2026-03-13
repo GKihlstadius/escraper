@@ -115,9 +115,15 @@ export async function scrapeCompetitor(competitorId: string): Promise<ScrapeResu
     });
 
     // Step 2: Scrape each URL (higher limit for own stores)
-    // Keep within Vercel 300s timeout: ~300 URLs × 1s each ≈ 5 min max
+    // Hard time limit: stop 30s before Vercel 300s timeout to allow log update
+    const MAX_SCRAPE_MS = 250_000;
     const scrapeLimit = competitor.is_own_store ? 300 : 150;
     for (const url of urls.slice(0, scrapeLimit)) {
+      // Safety: stop if approaching timeout
+      if (Date.now() - startTime > MAX_SCRAPE_MS) {
+        result.errors.push(`Tidsgräns nådd efter ${result.productsScraped} produkter`);
+        break;
+      }
       try {
         const html = await renderPage(url);
         const parsed = parseProductPage(html, url);
@@ -133,9 +139,10 @@ export async function scrapeCompetitor(competitorId: string): Promise<ScrapeResu
       }
     }
 
+    const timedOut = result.errors.some(e => e.includes('Tidsgräns'));
     await updateLog(
-      supabase, log?.id, 'SUCCESS',
-      `Scrapade ${result.productsScraped} produkter, ${result.newPrices} nya priser`,
+      supabase, log?.id, timedOut ? 'SUCCESS' : 'SUCCESS',
+      `Scrapade ${result.productsScraped} produkter (${urls.length} URLer hittade), ${result.newPrices} nya priser${timedOut ? ' (avbröts pga tidsgräns)' : ''}`,
       result.productsScraped, Date.now() - startTime
     );
   } catch (err) {

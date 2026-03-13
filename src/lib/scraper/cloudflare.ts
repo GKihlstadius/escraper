@@ -117,13 +117,15 @@ export async function renderPage(url: string): Promise<string> {
     });
     const html = await res.text();
 
-    // Check if the HTML contains product data (JSON-LD, og:title, h1 with content, price)
+    // Check if the HTML contains enough content to be useful
+    // Be lenient: if we got a decent-sized HTML response, use it directly
     const hasProductData = html.includes('application/ld+json') ||
       html.includes('itemprop="price"') ||
       html.includes('product:price:amount') ||
       (html.includes('<h1') && (html.includes('kr') || html.includes('SEK')));
 
-    if (hasProductData) return html;
+    // If HTML has product data or is reasonably large (>5KB), skip CF rendering
+    if (hasProductData || html.length > 5000) return html;
 
     // Page might need JS rendering — try CF Browser Rendering
     const cfHtml = await renderWithCF(url);
