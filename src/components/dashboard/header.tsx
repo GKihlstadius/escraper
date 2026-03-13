@@ -1,8 +1,6 @@
 'use client';
 
-import { useState } from 'react';
-import { Search, User, ChevronDown, Menu as MenuIcon } from 'lucide-react';
-import { Input } from '@/components/ui/input';
+import { User, ChevronDown, Menu as MenuIcon } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,19 +16,10 @@ interface HeaderProps {
   userEmail: string;
   unreadAlerts?: number;
   onMenuClick?: () => void;
-  showSearch?: boolean;
 }
 
-export function Header({ title, subtitle, userEmail, unreadAlerts = 0, onMenuClick, showSearch = false }: HeaderProps) {
-  const [searchQuery, setSearchQuery] = useState('');
+export function Header({ title, subtitle, userEmail, unreadAlerts = 0, onMenuClick }: HeaderProps) {
   const router = useRouter();
-
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (searchQuery.trim()) {
-      router.push(`/products?search=${encodeURIComponent(searchQuery)}`);
-    }
-  };
 
   const handleLogout = async () => {
     const supabase = createClient();
@@ -54,21 +43,6 @@ export function Header({ title, subtitle, userEmail, unreadAlerts = 0, onMenuCli
             {subtitle && <p className="text-[#6B7280] mt-0.5 md:mt-1 font-light text-sm md:text-base">{subtitle}</p>}
           </div>
         </div>
-
-        {showSearch && (
-          <form onSubmit={handleSearch} className="hidden sm:flex flex-1 max-w-md">
-            <div className="relative w-full">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[#6B7280]" />
-              <Input
-                type="text"
-                placeholder="Sök produkter..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 pr-4 py-2.5 w-full bg-[#F5F5F4] border border-[#E5E7EB] rounded-xl focus:bg-white transition-colors"
-              />
-            </div>
-          </form>
-        )}
 
         <div className="flex items-center gap-2 md:gap-4">
           <DropdownMenu>

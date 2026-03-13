@@ -54,7 +54,6 @@ export function DashboardShell({
           userEmail={userEmail}
           unreadAlerts={unreadAlerts}
           onMenuClick={() => setSidebarOpen(true)}
-          showSearch={pathname === '/products'}
         />
 
         <div className="flex-1 flex overflow-hidden relative">

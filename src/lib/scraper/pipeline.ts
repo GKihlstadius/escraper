@@ -413,22 +413,20 @@ async function findProduct(
     if (data) return data;
   }
 
-  // Step 3: Model key ILIKE with brand match
+  // Step 3: Model key ILIKE with brand match (fuzzy brand)
   const modelKey = extractModelKey(parsed.name, parsed.brand);
+  const brandCandidates = await findByBrand(supabase, parsed.brand);
+
   if (modelKey && modelKey !== 'okänt') {
     const brandLower = parsed.brand.toLowerCase().replace(/\s+/g, '-');
     const modelWords = modelKey.replace(brandLower, '').trim();
     if (modelWords.length >= 3) {
-      // Try with all model words first
-      const allWordsPattern = `%${modelWords.split(' ').join('%')}%`;
-      const { data } = await supabase
-        .from('products')
-        .select('*')
-        .eq('brand', parsed.brand)
-        .ilike('normalized_name', allWordsPattern)
-        .limit(5);
-      // Filter by type compatibility and pick best
-      const compatible = (data || []).filter((d: { name: string }) => areTypesCompatible(parsed.name, d.name));
+      // Filter brand candidates by model words
+      const allWordsLower = modelWords.split(' ');
+      const nameMatches = brandCandidates.filter((p: { normalized_name: string }) =>
+        allWordsLower.every(w => p.normalized_name.includes(w))
+      );
+      const compatible = nameMatches.filter((d: { name: string }) => areTypesCompatible(parsed.name, d.name));
       if (compatible.length === 1) return compatible[0];
       if (compatible.length > 1) {
         const best = pickBestMatch(compatible, parsed.name);
@@ -436,15 +434,12 @@ async function findProduct(
       }
 
       // Try with just the first model word (e.g., "fox", "fame", "sirona")
-      const firstWord = modelWords.split(' ')[0];
+      const firstWord = allWordsLower[0];
       if (firstWord && firstWord.length >= 3) {
-        const { data: d2 } = await supabase
-          .from('products')
-          .select('*')
-          .eq('brand', parsed.brand)
-          .ilike('normalized_name', `%${firstWord}%`)
-          .limit(10);
-        const compat2 = (d2 || []).filter((d: { name: string }) => areTypesCompatible(parsed.name, d.name));
+        const firstWordMatches = brandCandidates.filter((p: { normalized_name: string }) =>
+          p.normalized_name.includes(firstWord)
+        );
+        const compat2 = firstWordMatches.filter((d: { name: string }) => areTypesCompatible(parsed.name, d.name));
         if (compat2.length === 1) return compat2[0];
         if (compat2.length > 1) {
           const best = pickBestMatch(compat2, parsed.name);
@@ -455,24 +450,91 @@ async function findProduct(
   }
 
   // Step 4: Brand-only search with token overlap scoring
-  // Useful when names differ a lot but share core model words
-  if (parsed.brand && parsed.brand !== 'Okänt') {
-    const { data: candidates } = await supabase
-      .from('products')
-      .select('*')
-      .eq('brand', parsed.brand)
-      .eq('is_active', true)
-      .limit(100);
-
-    if (candidates && candidates.length > 0) {
-      // Filter by type compatibility before scoring
-      const compatible = candidates.filter((c: { name: string }) => areTypesCompatible(parsed.name, c.name));
-      const best = pickBestMatch(compatible, parsed.name, 0.6);
-      if (best) return best;
-    }
+  if (brandCandidates.length > 0) {
+    const compatible = brandCandidates.filter((c: { name: string }) => areTypesCompatible(parsed.name, c.name));
+    const best = pickBestMatch(compatible, parsed.name, 0.7); // Higher threshold to avoid false matches
+    if (best) return best;
   }
 
   return null;
+}
+
+// Brand aliases for fuzzy matching (e.g. "Britax Römer" should match "Britax")
+const BRAND_ALIASES: Record<string, string[]> = {
+  'britax': ['britax', 'britax römer', 'britax romer'],
+  'maxi-cosi': ['maxi-cosi', 'maxicosi', 'maxi cosi', 'maxi-cosi'],
+  'stokke': ['stokke', 'stokke®'],
+  'elodie': ['elodie', 'elodie details'],
+  'cybex': ['cybex'],
+  'bugaboo': ['bugaboo'],
+  'joie': ['joie'],
+  'axkid': ['axkid'],
+  'besafe': ['besafe'],
+  'nuna': ['nuna'],
+  'thule': ['thule'],
+  'joolz': ['joolz'],
+  'emmaljunga': ['emmaljunga'],
+  'crescent': ['crescent'],
+  'beemoo': ['beemoo'],
+  'kinderkraft': ['kinderkraft'],
+  'silver cross': ['silver cross', 'silvercross'],
+  'baby jogger': ['baby jogger', 'babyjogger'],
+  'uppababy': ['uppababy'],
+  'bebeconfort': ['bebeconfort', 'bébé confort'],
+  'lionelo': ['lionelo'],
+  'hauck': ['hauck'],
+  'doona': ['doona'],
+  'babyzen': ['babyzen'],
+};
+
+function getBrandFamily(brand: string): string {
+  const lower = brand.toLowerCase().replace(/[®]+/g, '').trim();
+  for (const [family, aliases] of Object.entries(BRAND_ALIASES)) {
+    for (const alias of aliases) {
+      if (lower === alias || lower.includes(alias) || alias.includes(lower)) {
+        return family;
+      }
+    }
+  }
+  return lower.replace(/[\s\-]+/g, '');
+}
+
+// Find all active products matching a brand (with fuzzy matching)
+async function findByBrand(
+  supabase: SupabaseServiceClient,
+  brand: string
+): Promise<Array<{ id: string; name: string; normalized_name: string; brand: string }>> {
+  const family = getBrandFamily(brand);
+  const aliases = BRAND_ALIASES[family] || [brand.toLowerCase()];
+
+  // Query with multiple OR conditions for brand aliases
+  let allResults: Array<{ id: string; name: string; normalized_name: string; brand: string }> = [];
+  for (const alias of aliases) {
+    const { data } = await supabase
+      .from('products')
+      .select('id, name, normalized_name, brand')
+      .eq('is_active', true)
+      .ilike('brand', alias)
+      .limit(100);
+    if (data) allResults.push(...data);
+  }
+
+  // Also try exact match as fallback
+  const { data: exact } = await supabase
+    .from('products')
+    .select('id, name, normalized_name, brand')
+    .eq('is_active', true)
+    .eq('brand', brand)
+    .limit(100);
+  if (exact) allResults.push(...exact);
+
+  // Deduplicate
+  const seen = new Set<string>();
+  return allResults.filter(p => {
+    if (seen.has(p.id)) return false;
+    seen.add(p.id);
+    return true;
+  });
 }
 
 // Pick the best matching product from candidates using token overlap
