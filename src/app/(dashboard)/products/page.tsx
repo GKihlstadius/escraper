@@ -72,7 +72,12 @@ export default function ProductsPage() {
       .eq('is_active', true)
       .order('name');
 
-    setProducts((data || []) as unknown as ProductWithVariants[]);
+    // Only keep products that have at least one price from our own stores (KBV/Bonti)
+    const allProducts = (data || []) as unknown as ProductWithVariants[];
+    const ownStoreProducts = allProducts.filter(p =>
+      p.variants?.some(v => v.prices?.some(pr => pr.competitor?.is_own_store))
+    );
+    setProducts(ownStoreProducts);
     setLoading(false);
   }
 
