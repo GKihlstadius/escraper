@@ -26,10 +26,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: 'No active competitors' });
   }
 
+  // Give each competitor a proportional time budget (total 280s, keep 20s for recs + response)
+  const totalBudgetMs = 280_000;
+  const perCompetitorMs = Math.floor(totalBudgetMs / competitors.length);
+
   const results = [];
   for (const competitor of competitors) {
     try {
-      const result = await scrapeCompetitor(competitor.id);
+      const result = await scrapeCompetitor(competitor.id, perCompetitorMs);
       results.push(result);
     } catch (err) {
       results.push({

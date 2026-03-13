@@ -23,7 +23,7 @@ interface ScrapeResult {
   errors: string[];
 }
 
-export async function scrapeCompetitor(competitorId: string): Promise<ScrapeResult> {
+export async function scrapeCompetitor(competitorId: string, timeBudgetMs?: number): Promise<ScrapeResult> {
   const supabase = getServiceClient();
 
   // Get competitor info
@@ -115,8 +115,8 @@ export async function scrapeCompetitor(competitorId: string): Promise<ScrapeResu
     });
 
     // Step 2: Scrape each URL (higher limit for own stores)
-    // Hard time limit: stop 30s before Vercel 300s timeout to allow log update
-    const MAX_SCRAPE_MS = 250_000;
+    // Hard time limit: stop before Vercel timeout to allow log update
+    const MAX_SCRAPE_MS = timeBudgetMs ? timeBudgetMs - 10_000 : 250_000;
     const scrapeLimit = competitor.is_own_store ? 300 : 150;
     for (const url of urls.slice(0, scrapeLimit)) {
       // Safety: stop if approaching timeout
