@@ -114,8 +114,9 @@ export async function scrapeCompetitor(competitorId: string): Promise<ScrapeResu
       return aHas - bHas;
     });
 
-    // Step 2: Scrape each URL (higher limit for own stores to get all products)
-    const scrapeLimit = competitor.is_own_store ? 500 : 150;
+    // Step 2: Scrape each URL (higher limit for own stores)
+    // Keep within Vercel 300s timeout: ~300 URLs × 1s each ≈ 5 min max
+    const scrapeLimit = competitor.is_own_store ? 300 : 150;
     for (const url of urls.slice(0, scrapeLimit)) {
       try {
         const html = await renderPage(url);

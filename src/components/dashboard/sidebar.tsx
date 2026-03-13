@@ -41,9 +41,33 @@ export function Sidebar({ userEmail, isOpen, collapsed, onClose, onToggleCollaps
   async function handleScrape() {
     setScraping(true);
     try {
-      const res = await fetch('/api/scrape', { method: 'POST', body: '{}' });
-      const data = await res.json().catch(() => null);
-      // Force full page reload to show updated data
+      // Get all active competitors
+      const supabase = createClient();
+      const { data: competitors } = await supabase
+        .from('competitors')
+        .select('id, name')
+        .eq('is_active', true);
+
+      // Scrape each competitor one by one to avoid Vercel timeout
+      for (const comp of competitors || []) {
+        try {
+          await fetch('/api/scrape', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ competitorId: comp.id }),
+          });
+        } catch (err) {
+          console.error(`Scrape failed for ${comp.name}:`, err);
+        }
+      }
+
+      // Generate recommendations after all scrapes
+      await fetch('/api/scrape', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ generateRecs: true }),
+      }).catch(() => {});
+
       window.location.reload();
     } catch (err) {
       console.error('Scrape failed:', err);

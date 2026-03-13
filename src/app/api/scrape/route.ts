@@ -13,7 +13,13 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { competitorId } = body;
+  const { competitorId, generateRecs } = body;
+
+  // Generate recommendations only
+  if (generateRecs) {
+    await generateRecommendations().catch(console.error);
+    return NextResponse.json({ ok: true });
+  }
 
   if (competitorId) {
     // Scrape single competitor
@@ -21,7 +27,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(result);
   }
 
-  // Scrape all competitors
+  // Scrape all competitors (used by cron — each gets its own timeout budget)
   const { data: competitors } = await supabase
     .from('competitors')
     .select('id, name')
