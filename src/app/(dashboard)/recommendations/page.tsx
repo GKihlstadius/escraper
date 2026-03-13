@@ -1,168 +1,239 @@
-'use client';
+import { createClient } from '@/lib/supabase/server';
+import Link from 'next/link';
+import { ArrowRight, TrendingDown, TrendingUp, Minus, ExternalLink } from 'lucide-react';
 
-import { useEffect, useState } from 'react';
-import { createClient } from '@/lib/supabase/client';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Check, X, TrendingDown } from 'lucide-react';
+export const dynamic = 'force-dynamic';
 
-interface Recommendation {
-  id: string;
-  current_price: number;
-  recommended_price: number;
-  reason: string;
-  status: string;
-  created_at: string;
-  product: { name: string; brand: string } | null;
-  competitor: { name: string } | null;
+interface PriceDiff {
+  productId: string;
+  productName: string;
+  brand: string;
+  ownStoreName: string;
+  ownPrice: number;
+  competitorName: string;
+  competitorPrice: number;
+  diff: number;
+  diffPct: number;
+  url: string | null;
 }
 
-export default function RecommendationsPage() {
-  const [recs, setRecs] = useState<Recommendation[]>([]);
-  const [loading, setLoading] = useState(true);
+export default async function RecommendationsPage() {
+  const supabase = await createClient();
 
-  useEffect(() => {
-    loadRecs();
-  }, []);
+  const [productsRes, competitorsRes, variantsRes] = await Promise.all([
+    supabase.from('products').select('id, name, brand').eq('is_active', true),
+    supabase.from('competitors').select('id, name, is_own_store').eq('is_active', true),
+    supabase.from('product_variants').select('id, product_id'),
+  ]);
 
-  async function loadRecs() {
-    const supabase = createClient();
-    const { data } = await supabase
-      .from('price_recommendations')
-      .select(`
-        id, current_price, recommended_price, reason, status, created_at,
-        product:products(name, brand),
-        competitor:competitors(name)
-      `)
-      .order('created_at', { ascending: false })
-      .limit(50);
-    setRecs((data || []) as unknown as Recommendation[]);
-    setLoading(false);
+  const products = productsRes.data || [];
+  const competitors = competitorsRes.data || [];
+  const variants = variantsRes.data || [];
+
+  const productMap = new Map(products.map(p => [p.id, p]));
+  const compMap = new Map(competitors.map(c => [c.id, c]));
+  const variantToProduct = new Map(variants.map(v => [v.id, v.product_id]));
+  const ownStores = competitors.filter(c => c.is_own_store);
+  const ownStoreIds = new Set(ownStores.map(c => c.id));
+
+  // Get latest prices per variant+competitor
+  const { data: allPrices } = await supabase
+    .from('product_prices')
+    .select('variant_id, competitor_id, price, url')
+    .order('scraped_at', { ascending: false });
+
+  // Keep only latest price per variant+competitor
+  const latestPrices = new Map<string, { price: number; url: string | null }>();
+  for (const p of allPrices || []) {
+    const key = `${p.variant_id}:${p.competitor_id}`;
+    if (!latestPrices.has(key)) {
+      latestPrices.set(key, { price: p.price, url: p.url });
+    }
   }
 
-  async function updateStatus(id: string, status: 'APPLIED' | 'DISMISSED') {
-    const supabase = createClient();
-    await supabase.from('price_recommendations').update({ status }).eq('id', id);
-    setRecs((prev) => prev.map((r) => (r.id === id ? { ...r, status } : r)));
+  // Build price diffs: for each product, compare own price vs each competitor
+  const diffs: PriceDiff[] = [];
+
+  for (const variant of variants) {
+    const product = productMap.get(variant.product_id);
+    if (!product) continue;
+
+    // Get own store prices for this variant
+    const ownPrices: { storeName: string; price: number }[] = [];
+    for (const ownStore of ownStores) {
+      const key = `${variant.id}:${ownStore.id}`;
+      const entry = latestPrices.get(key);
+      if (entry && entry.price > 0) {
+        ownPrices.push({ storeName: ownStore.name, price: entry.price });
+      }
+    }
+
+    if (ownPrices.length === 0) continue;
+
+    // Compare against each competitor
+    for (const [key, entry] of latestPrices) {
+      if (!key.startsWith(variant.id + ':')) continue;
+      const compId = key.split(':')[1];
+      if (ownStoreIds.has(compId)) continue;
+      if (entry.price <= 0) continue;
+
+      const comp = compMap.get(compId);
+      if (!comp) continue;
+
+      // Use the first own store price for comparison
+      for (const own of ownPrices) {
+        const diff = own.price - entry.price;
+        if (Math.abs(diff) < 1) continue; // Skip if essentially same price
+
+        diffs.push({
+          productId: product.id,
+          productName: product.name,
+          brand: product.brand,
+          ownStoreName: own.storeName,
+          ownPrice: own.price,
+          competitorName: comp.name,
+          competitorPrice: entry.price,
+          diff,
+          diffPct: (diff / own.price) * 100,
+          url: entry.url,
+        });
+      }
+    }
   }
 
-  const pending = recs.filter((r) => r.status === 'PENDING');
-  const handled = recs.filter((r) => r.status !== 'PENDING');
+  // Sort: biggest price difference first (we're more expensive)
+  diffs.sort((a, b) => b.diff - a.diff);
+
+  // Deduplicate by product+competitor (keep worst diff per product)
+  const seen = new Set<string>();
+  const uniqueDiffs = diffs.filter(d => {
+    const key = `${d.productId}:${d.competitorName}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  const moreExpensive = uniqueDiffs.filter(d => d.diff > 0);
+  const cheaper = uniqueDiffs.filter(d => d.diff < 0).sort((a, b) => a.diff - b.diff);
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Prisrekommendationer</h1>
-        <p className="text-muted-foreground">
-          {pending.length} väntande rekommendationer
+        <h1 className="text-xl sm:text-2xl font-bold text-zinc-900">Prisrekommendationer</h1>
+        <p className="text-sm text-zinc-500 mt-1">
+          Prisskillnader mellan era butiker och konkurrenter
         </p>
       </div>
 
-      {loading ? (
-        <div className="space-y-3">
-          {[...Array(3)].map((_, i) => (
-            <Card key={i} className="animate-pulse">
-              <CardContent className="pt-6 h-24" />
-            </Card>
-          ))}
+      {/* Summary */}
+      <div className="grid grid-cols-2 gap-4">
+        <div className="bg-white rounded-xl border border-zinc-100 p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <TrendingUp className="h-4 w-4 text-red-500" />
+            <span className="text-xs text-zinc-400 uppercase tracking-wider font-medium">Dyrare än konkurrent</span>
+          </div>
+          <div className="text-2xl font-semibold text-zinc-900">{moreExpensive.length}</div>
+          <p className="text-xs text-zinc-400 mt-0.5">produkter</p>
         </div>
-      ) : pending.length === 0 && handled.length === 0 ? (
-        <div className="text-center py-12 text-muted-foreground">
-          Inga rekommendationer ännu. Kör en scraping för att generera rekommendationer.
+        <div className="bg-white rounded-xl border border-zinc-100 p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <TrendingDown className="h-4 w-4 text-emerald-500" />
+            <span className="text-xs text-zinc-400 uppercase tracking-wider font-medium">Billigare än konkurrent</span>
+          </div>
+          <div className="text-2xl font-semibold text-zinc-900">{cheaper.length}</div>
+          <p className="text-xs text-zinc-400 mt-0.5">produkter</p>
         </div>
-      ) : (
-        <>
-          {pending.length > 0 && (
-            <div className="space-y-3">
-              <h2 className="text-lg font-semibold">Väntande</h2>
-              {pending.map((rec) => (
-                <RecommendationCard
-                  key={rec.id}
-                  rec={rec}
-                  onApply={() => updateStatus(rec.id, 'APPLIED')}
-                  onDismiss={() => updateStatus(rec.id, 'DISMISSED')}
-                />
-              ))}
-            </div>
-          )}
+      </div>
 
-          {handled.length > 0 && (
-            <div className="space-y-3">
-              <h2 className="text-lg font-semibold text-muted-foreground">Hanterade</h2>
-              {handled.slice(0, 20).map((rec) => (
-                <RecommendationCard key={rec.id} rec={rec} />
-              ))}
-            </div>
-          )}
-        </>
+      {/* More expensive — action needed */}
+      {moreExpensive.length > 0 && (
+        <div className="space-y-3">
+          <h2 className="text-sm font-semibold text-zinc-900 flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-red-500" />
+            Ni är dyrare — överväg prissänkning
+          </h2>
+          <div className="space-y-2">
+            {moreExpensive.map((d, i) => (
+              <PriceDiffRow key={i} diff={d} type="expensive" />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Cheaper — for info */}
+      {cheaper.length > 0 && (
+        <div className="space-y-3">
+          <h2 className="text-sm font-semibold text-zinc-900 flex items-center gap-2">
+            <TrendingDown className="h-4 w-4 text-emerald-500" />
+            Ni är billigare
+          </h2>
+          <div className="space-y-2">
+            {cheaper.map((d, i) => (
+              <PriceDiffRow key={i} diff={d} type="cheaper" />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {uniqueDiffs.length === 0 && (
+        <div className="text-center py-12 text-zinc-400">
+          Inga prisskillnader hittade. Kör en scraping för att hämta prisdata.
+        </div>
       )}
     </div>
   );
 }
 
-function RecommendationCard({
-  rec,
-  onApply,
-  onDismiss,
-}: {
-  rec: Recommendation;
-  onApply?: () => void;
-  onDismiss?: () => void;
-}) {
-  const savings = rec.current_price - rec.recommended_price;
-  const isPending = rec.status === 'PENDING';
+function PriceDiffRow({ diff: d, type }: { diff: PriceDiff; type: 'expensive' | 'cheaper' }) {
+  const absDiff = Math.abs(d.diff);
+  const absPct = Math.abs(d.diffPct);
 
   return (
-    <Card className={isPending ? '' : 'opacity-60'}>
-      <CardContent className="pt-4 pb-4">
-        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+    <Link href={`/products/${d.productId}`}>
+      <div className="bg-white rounded-xl border border-zinc-100 hover:border-zinc-200 hover:shadow-sm transition-all p-3 sm:p-4">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+          {/* Product info */}
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <TrendingDown className="h-4 w-4 text-green-600 shrink-0" />
-              <p className="font-medium text-sm break-words">
-                {rec.product?.name || 'Okänd produkt'}
-              </p>
-              {rec.status === 'APPLIED' && (
-                <Badge className="bg-green-100 text-green-800">Genomförd</Badge>
-              )}
-              {rec.status === 'DISMISSED' && (
-                <Badge variant="secondary">Avfärdad</Badge>
-              )}
+            <p className="font-medium text-sm text-zinc-900 truncate">{d.productName}</p>
+            <p className="text-xs text-zinc-400">{d.brand}</p>
+          </div>
+
+          {/* Price comparison */}
+          <div className="flex items-center gap-2 sm:gap-3 text-sm">
+            <div className="text-right">
+              <p className="text-[10px] text-zinc-400">{d.ownStoreName}</p>
+              <p className="font-medium text-zinc-900">{d.ownPrice.toLocaleString('sv-SE')} kr</p>
             </div>
-            <p className="text-sm text-muted-foreground mt-1">{rec.reason}</p>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2">
-              <span className="text-sm">
-                <span className="text-muted-foreground">Nu:</span>{' '}
-                <span className="font-medium">{rec.current_price.toLocaleString('sv-SE')} kr</span>
-              </span>
-              <span className="text-sm text-green-600 font-medium">
-                → {rec.recommended_price.toLocaleString('sv-SE')} kr
-              </span>
-              <span className="text-xs text-muted-foreground">
-                (Besparing: {savings.toLocaleString('sv-SE')} kr)
-              </span>
-              {rec.competitor && (
-                <span className="text-xs text-muted-foreground">
-                  vs {rec.competitor.name}
-                </span>
-              )}
+            <ArrowRight className="h-3 w-3 text-zinc-300 shrink-0" />
+            <div className="text-right">
+              <p className="text-[10px] text-zinc-400">{d.competitorName}</p>
+              <p className="font-medium text-zinc-900">{d.competitorPrice.toLocaleString('sv-SE')} kr</p>
             </div>
           </div>
-          {isPending && onApply && onDismiss && (
-            <div className="flex gap-2 shrink-0">
-              <Button size="sm" onClick={onApply}>
-                <Check className="h-4 w-4 mr-1" />
-                Genomför
-              </Button>
-              <Button size="sm" variant="outline" onClick={onDismiss}>
-                <X className="h-4 w-4 mr-1" />
-                Avfärda
-              </Button>
-            </div>
+
+          {/* Diff badge */}
+          <div className={`shrink-0 px-2.5 py-1 rounded-lg text-xs font-medium ${
+            type === 'expensive'
+              ? 'bg-red-50 text-red-600 border border-red-100'
+              : 'bg-emerald-50 text-emerald-600 border border-emerald-100'
+          }`}>
+            {type === 'expensive' ? '+' : '-'}{absDiff.toLocaleString('sv-SE')} kr ({absPct.toFixed(0)}%)
+          </div>
+
+          {/* External link */}
+          {d.url && (
+            <a
+              href={d.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="text-zinc-300 hover:text-zinc-500 transition-colors shrink-0"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
           )}
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </Link>
   );
 }

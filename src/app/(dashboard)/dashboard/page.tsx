@@ -37,6 +37,17 @@ export default async function DashboardPage() {
     .order('scraped_at', { ascending: true });
   const prices = allPrices || [];
 
+  // ── Comparable products count (has own + competitor prices) ──
+  const productsWithOwn = new Set<string>();
+  const productsWithComp = new Set<string>();
+  for (const p of prices) {
+    const productId = variantToProduct.get(p.variant_id);
+    if (!productId) continue;
+    if (ownStoreIds.has(p.competitor_id)) productsWithOwn.add(productId);
+    else productsWithComp.add(productId);
+  }
+  const comparableCount = [...productsWithOwn].filter(id => productsWithComp.has(id)).length;
+
   // ── Product price comparison data ──
   const productPriceMap = new Map<string, Map<string, Map<string, number>>>();
   const productUrlMap = new Map<string, Map<string, string>>();
@@ -112,7 +123,7 @@ export default async function DashboardPage() {
   const cheapestPct = positioned > 0 ? Math.round((cheapest / positioned) * 100) : 0;
   const expensivePct = positioned > 0 ? Math.round((expensive / positioned) * 100) : 0;
 
-  const totalProducts = products.length;
+  const totalProducts = comparableCount;
   const drops = priceDropsRes.count || 0;
   const increases = priceIncreasesRes.count || 0;
   const recs = recsRes.count || 0;
