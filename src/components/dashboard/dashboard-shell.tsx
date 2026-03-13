@@ -60,14 +60,14 @@ export function DashboardShell({
         <div className="flex-1 flex overflow-hidden">
           {/* Page content */}
           <main className="flex-1 overflow-auto">
-            <div className="p-6 max-w-7xl mx-auto">
+            <div className="p-3 sm:p-4 md:p-6 max-w-7xl mx-auto">
               {children}
             </div>
           </main>
 
           {/* AI Panel — inline on desktop when open */}
           {aiOpen && (
-            <div className="hidden sm:flex w-[420px] flex-shrink-0 h-[calc(100vh-73px)]">
+            <div className="hidden sm:flex w-[340px] lg:w-[420px] flex-shrink-0 h-[calc(100vh-73px)]">
               <AIPanel panelState={aiState} onStateChange={setAiState} />
             </div>
           )}

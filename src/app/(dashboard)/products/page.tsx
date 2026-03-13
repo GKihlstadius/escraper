@@ -72,12 +72,15 @@ export default function ProductsPage() {
       .eq('is_active', true)
       .order('name');
 
-    // Only keep products that have at least one price from our own stores (KBV/Bonti)
+    // Only keep products that have prices from both own stores AND at least one competitor
     const allProducts = (data || []) as unknown as ProductWithVariants[];
-    const ownStoreProducts = allProducts.filter(p =>
-      p.variants?.some(v => v.prices?.some(pr => pr.competitor?.is_own_store))
-    );
-    setProducts(ownStoreProducts);
+    const comparableProducts = allProducts.filter(p => {
+      const allPrices = p.variants?.flatMap(v => v.prices || []) || [];
+      const hasOwn = allPrices.some(pr => pr.competitor?.is_own_store);
+      const hasCompetitor = allPrices.some(pr => pr.competitor && !pr.competitor.is_own_store);
+      return hasOwn && hasCompetitor;
+    });
+    setProducts(comparableProducts);
     setLoading(false);
   }
 
@@ -197,7 +200,7 @@ export default function ProductsPage() {
         {showFilters && (
           <div className="flex flex-wrap gap-3 p-4 bg-white rounded-xl border border-[#E5E7EB]">
             <Select value={subCategory} onValueChange={(v) => v && setSubCategory(v)}>
-              <SelectTrigger className="w-44 rounded-xl border-[#E5E7EB]">
+              <SelectTrigger className="w-full sm:w-44 rounded-xl border-[#E5E7EB]">
                 <SelectValue placeholder="Kategori" />
               </SelectTrigger>
               <SelectContent>
@@ -209,7 +212,7 @@ export default function ProductsPage() {
             </Select>
 
             <Select value={brandFilter} onValueChange={(v) => v && setBrandFilter(v)}>
-              <SelectTrigger className="w-44 rounded-xl border-[#E5E7EB]">
+              <SelectTrigger className="w-full sm:w-44 rounded-xl border-[#E5E7EB]">
                 <SelectValue placeholder="Varumärke" />
               </SelectTrigger>
               <SelectContent>
@@ -221,7 +224,7 @@ export default function ProductsPage() {
             </Select>
 
             <Select value={colorFilter} onValueChange={(v) => v && setColorFilter(v)}>
-              <SelectTrigger className="w-44 rounded-xl border-[#E5E7EB]">
+              <SelectTrigger className="w-full sm:w-44 rounded-xl border-[#E5E7EB]">
                 <SelectValue placeholder="Färg" />
               </SelectTrigger>
               <SelectContent>
@@ -233,7 +236,7 @@ export default function ProductsPage() {
             </Select>
 
             <Select value={stockFilter} onValueChange={(v) => v && setStockFilter(v as typeof stockFilter)}>
-              <SelectTrigger className="w-44 rounded-xl border-[#E5E7EB]">
+              <SelectTrigger className="w-full sm:w-44 rounded-xl border-[#E5E7EB]">
                 <SelectValue placeholder="Lagerstatus" />
               </SelectTrigger>
               <SelectContent>

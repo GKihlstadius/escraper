@@ -180,7 +180,7 @@ export default function AlertsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">Larm</h1>
           <p className="text-muted-foreground">
@@ -188,16 +188,16 @@ export default function AlertsPage() {
           </p>
         </div>
         {unreadCount > 0 && (
-          <Button variant="outline" size="sm" onClick={markAllAsRead}>
+          <Button variant="outline" size="sm" onClick={markAllAsRead} className="self-start sm:self-auto">
             <CheckCheck className="h-4 w-4 mr-2" />
             Markera alla som lästa
           </Button>
         )}
       </div>
 
-      <div className="flex gap-4">
+      <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
         <Select value={typeFilter} onValueChange={(v) => v && setTypeFilter(v)}>
-          <SelectTrigger className="w-48">
+          <SelectTrigger className="w-full sm:w-48">
             <SelectValue placeholder="Typ" />
           </SelectTrigger>
           <SelectContent>
@@ -208,7 +208,7 @@ export default function AlertsPage() {
           </SelectContent>
         </Select>
         <Select value={severityFilter} onValueChange={(v) => v && setSeverityFilter(v)}>
-          <SelectTrigger className="w-48">
+          <SelectTrigger className="w-full sm:w-48">
             <SelectValue placeholder="Allvarlighet" />
           </SelectTrigger>
           <SelectContent>

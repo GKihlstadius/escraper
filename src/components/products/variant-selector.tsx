@@ -60,13 +60,13 @@ export function VariantSelector({ product }: Props) {
     <div className="space-y-6">
       {/* Variant selector */}
       {variants.length > 1 && (
-        <div className="flex items-center gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
           <span className="text-sm font-medium">Färg/variant:</span>
           <Select
             value={String(selectedIdx)}
             onValueChange={(v) => setSelectedIdx(Number(v))}
           >
-            <SelectTrigger className="w-64">
+            <SelectTrigger className="w-full sm:w-64">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -88,6 +88,7 @@ export function VariantSelector({ product }: Props) {
         </CardHeader>
         <CardContent>
           {latestPrices.length > 0 ? (
+            <div className="overflow-x-auto -mx-6 px-6">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -154,6 +155,7 @@ export function VariantSelector({ product }: Props) {
                   })}
               </TableBody>
             </Table>
+            </div>
           ) : (
             <p className="text-muted-foreground text-center py-6">Inga priser hittade.</p>
           )}

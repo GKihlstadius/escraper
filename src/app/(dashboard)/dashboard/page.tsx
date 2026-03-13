@@ -176,10 +176,10 @@ export default async function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Position bar */}
         {positioned > 0 && (
-          <div className="lg:col-span-2 bg-white rounded-xl border border-zinc-100 p-5">
-            <div className="flex items-center justify-between mb-4">
+          <div className="lg:col-span-2 bg-white rounded-xl border border-zinc-100 p-3 sm:p-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-2">
               <h3 className="text-sm font-medium text-zinc-900">Prisposition</h3>
-              <div className="flex gap-4 text-[11px] text-zinc-400">
+              <div className="flex gap-3 sm:gap-4 text-[11px] text-zinc-400">
                 <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500" />Billigast</span>
                 <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-zinc-200" />Mellan</span>
                 <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-red-400" />Dyrast</span>
@@ -199,7 +199,7 @@ export default async function DashboardPage() {
         )}
 
         {/* Quick actions */}
-        <div className="bg-white rounded-xl border border-zinc-100 p-5 flex flex-col justify-between">
+        <div className="bg-white rounded-xl border border-zinc-100 p-3 sm:p-5 flex flex-col justify-between">
           <h3 className="text-sm font-medium text-zinc-900 mb-3">Snabblänkar</h3>
           <div className="space-y-2">
             {recs > 0 && (
@@ -220,7 +220,7 @@ export default async function DashboardPage() {
       </div>
 
       {/* ── Product Price Comparison ── */}
-      <div className="bg-white rounded-xl border border-zinc-100 p-5">
+      <div className="bg-white rounded-xl border border-zinc-100 p-3 sm:p-5">
         <ProductPriceComparison
           products={comparisonProducts}
           competitors={comparisonCompetitors}
@@ -248,13 +248,13 @@ function KpiCard({
     : 'border-l-transparent';
 
   const inner = (
-    <div className={`bg-white rounded-xl border border-zinc-100 border-l-[3px] ${accentBorder} p-5 ${href ? 'hover:shadow-md hover:border-zinc-200 transition-all cursor-pointer' : ''}`}>
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-xs text-zinc-400 uppercase tracking-wider font-medium">{title}</span>
+    <div className={`bg-white rounded-xl border border-zinc-100 border-l-[3px] ${accentBorder} p-3 sm:p-5 ${href ? 'hover:shadow-md hover:border-zinc-200 transition-all cursor-pointer' : ''}`}>
+      <div className="flex items-center justify-between mb-2 sm:mb-3">
+        <span className="text-[10px] sm:text-xs text-zinc-400 uppercase tracking-wider font-medium">{title}</span>
         <span className="text-zinc-300">{icon}</span>
       </div>
-      <div className="text-2xl font-semibold tabular-nums text-zinc-900">{value}</div>
-      {subtitle && <p className="text-xs text-zinc-400 mt-1">{subtitle}</p>}
+      <div className="text-xl sm:text-2xl font-semibold tabular-nums text-zinc-900">{value}</div>
+      {subtitle && <p className="text-[10px] sm:text-xs text-zinc-400 mt-1">{subtitle}</p>}
     </div>
   );
 

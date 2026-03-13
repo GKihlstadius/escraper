@@ -101,11 +101,11 @@ export function ProductPriceComparison({
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4 gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-2 sm:gap-4">
         <h2 className="text-sm font-medium shrink-0">Prisjämförelse</h2>
 
         {/* Product search */}
-        <div className="relative w-full max-w-sm">
+        <div className="relative w-full sm:max-w-sm">
           <input
             type="text"
             placeholder="Sök produkt..."
@@ -113,7 +113,7 @@ export function ProductPriceComparison({
             onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
             onFocus={() => { setOpen(true); setSearch(''); }}
             onBlur={() => setTimeout(() => setOpen(false), 200)}
-            className="w-full h-8 px-2.5 text-sm rounded-lg border border-zinc-200 bg-white outline-none focus:border-zinc-400 transition-colors"
+            className="w-full h-10 sm:h-8 px-3 sm:px-2.5 text-sm rounded-lg border border-zinc-200 bg-white outline-none focus:border-zinc-400 transition-colors"
           />
           {open && (
             <div className="absolute z-50 top-full mt-1 w-full max-h-64 overflow-y-auto rounded-lg border border-zinc-200 bg-white shadow-lg">
@@ -134,7 +134,7 @@ export function ProductPriceComparison({
                         setSearch('');
                         setOpen(false);
                       }}
-                      className={`w-full text-left px-3 py-2 text-sm hover:bg-zinc-50 transition-colors flex items-center justify-between ${
+                      className={`w-full text-left px-3 py-3 sm:py-2 text-sm hover:bg-zinc-50 transition-colors flex items-center justify-between ${
                         p.id === selectedProductId ? 'bg-zinc-50 font-medium' : ''
                       }`}
                     >
@@ -197,8 +197,8 @@ export function ProductPriceComparison({
 
       {/* Chart */}
       {chartData.length > 0 ? (
-        <ResponsiveContainer width="100%" height={350}>
-          <LineChart data={chartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+        <ResponsiveContainer width="100%" height={280}>
+          <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
             <CartesianGrid stroke="#f3f4f6" vertical={false} />
             <XAxis
               dataKey="date"
@@ -230,7 +230,7 @@ export function ProductPriceComparison({
           </LineChart>
         </ResponsiveContainer>
       ) : (
-        <div className="h-[350px] flex items-center justify-center text-sm text-zinc-400">
+        <div className="h-[280px] flex items-center justify-center text-sm text-zinc-400">
           Ingen prisdata för vald produkt
         </div>
       )}

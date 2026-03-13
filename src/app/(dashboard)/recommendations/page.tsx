@@ -116,11 +116,11 @@ function RecommendationCard({
   return (
     <Card className={isPending ? '' : 'opacity-60'}>
       <CardContent className="pt-4 pb-4">
-        <div className="flex items-start justify-between">
-          <div className="flex-1">
-            <div className="flex items-center gap-2">
-              <TrendingDown className="h-4 w-4 text-green-600" />
-              <p className="font-medium text-sm">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <TrendingDown className="h-4 w-4 text-green-600 shrink-0" />
+              <p className="font-medium text-sm break-words">
                 {rec.product?.name || 'Okänd produkt'}
               </p>
               {rec.status === 'APPLIED' && (
@@ -131,7 +131,7 @@ function RecommendationCard({
               )}
             </div>
             <p className="text-sm text-muted-foreground mt-1">{rec.reason}</p>
-            <div className="flex items-center gap-4 mt-2">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2">
               <span className="text-sm">
                 <span className="text-muted-foreground">Nu:</span>{' '}
                 <span className="font-medium">{rec.current_price.toLocaleString('sv-SE')} kr</span>
@@ -150,7 +150,7 @@ function RecommendationCard({
             </div>
           </div>
           {isPending && onApply && onDismiss && (
-            <div className="flex gap-2 ml-4">
+            <div className="flex gap-2 shrink-0">
               <Button size="sm" onClick={onApply}>
                 <Check className="h-4 w-4 mr-1" />
                 Genomför

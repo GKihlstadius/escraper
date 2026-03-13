@@ -34,18 +34,18 @@ export default async function ProductDetailPage({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start gap-6">
+      <div className="flex flex-col sm:flex-row items-start gap-4 sm:gap-6">
         {product.image && (
           <img
             src={product.image}
             alt={product.name}
-            className="w-32 h-32 object-contain rounded-lg border"
+            className="w-24 h-24 sm:w-32 sm:h-32 object-contain rounded-lg border"
           />
         )}
-        <div>
-          <h1 className="text-2xl font-bold">{product.name}</h1>
+        <div className="min-w-0">
+          <h1 className="text-xl sm:text-2xl font-bold break-words">{product.name}</h1>
           <p className="text-muted-foreground">{product.brand}</p>
-          <div className="flex gap-2 mt-2">
+          <div className="flex flex-wrap gap-2 mt-2">
             <Badge>{CATEGORY_LABELS[product.category as ProductCategory] || product.category}</Badge>
             {product.ean && <Badge variant="outline">EAN: {product.ean}</Badge>}
           </div>

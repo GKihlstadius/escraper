@@ -107,23 +107,23 @@ export default function DatabasePage() {
                   {items.map((snapshot) => (
                     <div
                       key={snapshot.id}
-                      className="flex items-center justify-between px-5 py-3.5 hover:bg-zinc-50/50 transition-colors"
+                      className="flex items-center justify-between px-3 sm:px-5 py-3 sm:py-3.5 hover:bg-zinc-50/50 transition-colors"
                     >
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-2 sm:gap-3 min-w-0">
                         <div className="h-8 w-8 rounded-lg bg-violet-50 flex items-center justify-center shrink-0">
                           <FileSpreadsheet className="h-4 w-4 text-violet-500" />
                         </div>
-                        <div>
-                          <p className="text-sm text-zinc-700 capitalize">{formatDate(snapshot.snapshot_date)}</p>
+                        <div className="min-w-0">
+                          <p className="text-sm text-zinc-700 capitalize truncate">{formatDate(snapshot.snapshot_date)}</p>
                           <p className="text-xs text-zinc-400">{snapshot.products_count} produkter</p>
                         </div>
                       </div>
                       <button
                         onClick={() => downloadSnapshot(snapshot.id, snapshot.file_name)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-violet-600 hover:text-violet-700 hover:bg-violet-50 rounded-lg transition-colors"
+                        className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 text-xs font-medium text-violet-600 hover:text-violet-700 hover:bg-violet-50 rounded-lg transition-colors shrink-0"
                       >
                         <Download className="h-3.5 w-3.5" />
-                        Ladda ner
+                        <span className="hidden sm:inline">Ladda ner</span>
                       </button>
                     </div>
                   ))}
