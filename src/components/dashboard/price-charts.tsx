@@ -1,0 +1,359 @@
+'use client';
+
+import { useState, useMemo } from 'react';
+import {
+  LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer,
+} from 'recharts';
+import { ExternalLink } from 'lucide-react';
+
+// ── Store colors (fallback palette) ──
+const PALETTE = [
+  '#3b82f6', '#10b981', '#f59e0b', '#ef4444',
+  '#ec4899', '#06b6d4', '#84cc16', '#f97316',
+];
+
+type CompetitorInfo = { id: string; name: string; isOwn: boolean; color: string };
+type ProductInfo = { id: string; name: string; brand: string };
+
+export function ProductPriceComparison({
+  products,
+  competitors,
+  prices,
+  urls,
+}: {
+  products: ProductInfo[];
+  competitors: CompetitorInfo[];
+  prices: Record<string, Record<string, Record<string, number>>>;
+  urls: Record<string, Record<string, string>>;
+}) {
+  const [selectedProductId, setSelectedProductId] = useState(products[0]?.id || '');
+  const [search, setSearch] = useState('');
+  const [open, setOpen] = useState(false);
+
+  const filtered = useMemo(() => {
+    if (!search) return products;
+    const q = search.toLowerCase();
+    return products.filter(p =>
+      p.name.toLowerCase().includes(q) || p.brand.toLowerCase().includes(q)
+    );
+  }, [products, search]);
+
+  const selectedProduct = products.find(p => p.id === selectedProductId);
+
+  // Build chart data for selected product
+  const { chartData, activeCompetitors } = useMemo(() => {
+    const productPrices = prices[selectedProductId];
+    if (!productPrices) return { chartData: [], activeCompetitors: [] };
+
+    const allDates = new Set<string>();
+    for (const dateMap of Object.values(productPrices)) {
+      for (const date of Object.keys(dateMap)) allDates.add(date);
+    }
+    const sortedDates = [...allDates].sort();
+
+    const active = competitors.filter(c => productPrices[c.id]);
+
+    const data = sortedDates.map(date => {
+      const row: Record<string, string | number> = { date: date.slice(5) };
+      for (const comp of active) {
+        const price = productPrices[comp.id]?.[date];
+        if (price !== undefined) row[comp.name] = price;
+      }
+      return row;
+    });
+
+    return { chartData: data, activeCompetitors: active };
+  }, [selectedProductId, prices, competitors]);
+
+  // URLs for current product's competitors
+  const currentUrls = useMemo(() => {
+    const productUrls = urls[selectedProductId] || {};
+    const map = new Map<string, string>();
+    for (const comp of activeCompetitors) {
+      if (productUrls[comp.id]) map.set(comp.name, productUrls[comp.id]);
+    }
+    return map;
+  }, [selectedProductId, urls, activeCompetitors]);
+
+  // Assign colors: own stores = violet, others = palette
+  const colorMap = useMemo(() => {
+    const map = new Map<string, string>();
+    let idx = 0;
+    for (const comp of activeCompetitors) {
+      if (comp.isOwn) {
+        map.set(comp.name, '#8b5cf6');
+      } else {
+        map.set(comp.name, PALETTE[idx % PALETTE.length]);
+        idx++;
+      }
+    }
+    return map;
+  }, [activeCompetitors]);
+
+  if (!products.length) {
+    return (
+      <div className="h-[300px] flex items-center justify-center text-sm text-zinc-400">
+        Ingen produktdata med jämförbara priser
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4 gap-4">
+        <h2 className="text-sm font-medium shrink-0">Prisjämförelse</h2>
+
+        {/* Product search */}
+        <div className="relative w-full max-w-sm">
+          <input
+            type="text"
+            placeholder="Sök produkt..."
+            value={open ? search : (selectedProduct ? `${selectedProduct.brand} ${selectedProduct.name}` : '')}
+            onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
+            onFocus={() => { setOpen(true); setSearch(''); }}
+            onBlur={() => setTimeout(() => setOpen(false), 200)}
+            className="w-full h-8 px-2.5 text-sm rounded-lg border border-zinc-200 bg-white outline-none focus:border-zinc-400 transition-colors"
+          />
+          {open && (
+            <div className="absolute z-50 top-full mt-1 w-full max-h-64 overflow-y-auto rounded-lg border border-zinc-200 bg-white shadow-lg">
+              {filtered.length === 0 ? (
+                <div className="px-3 py-2 text-sm text-zinc-400">Inga träffar</div>
+              ) : (
+                filtered.slice(0, 50).map(p => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      setSelectedProductId(p.id);
+                      setSearch('');
+                      setOpen(false);
+                    }}
+                    className={`w-full text-left px-3 py-1.5 text-sm hover:bg-zinc-50 transition-colors ${
+                      p.id === selectedProductId ? 'bg-zinc-50 font-medium' : ''
+                    }`}
+                  >
+                    <span className="text-zinc-400 mr-1">{p.brand}</span>
+                    {p.name}
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Legend with clickable store links */}
+      <div className="flex flex-wrap gap-x-4 gap-y-1.5 mb-3">
+        {activeCompetitors.map(comp => {
+          const url = currentUrls.get(comp.name);
+          const inner = (
+            <>
+              <span
+                className="h-2 w-2 rounded-full shrink-0"
+                style={{ background: colorMap.get(comp.name) }}
+              />
+              <span className={comp.isOwn ? 'font-semibold text-zinc-700' : ''}>
+                {comp.name}
+              </span>
+              {url && <ExternalLink className="h-3 w-3 text-zinc-300 group-hover:text-zinc-500 transition-colors" />}
+            </>
+          );
+
+          return url ? (
+            <a
+              key={comp.id}
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-700 transition-colors"
+            >
+              {inner}
+            </a>
+          ) : (
+            <span key={comp.id} className="flex items-center gap-1.5 text-xs text-zinc-500">
+              {inner}
+            </span>
+          );
+        })}
+      </div>
+
+      {/* Chart */}
+      {chartData.length > 0 ? (
+        <ResponsiveContainer width="100%" height={350}>
+          <LineChart data={chartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+            <CartesianGrid stroke="#f3f4f6" vertical={false} />
+            <XAxis
+              dataKey="date"
+              tick={{ fontSize: 11, fill: '#a1a1aa' }}
+              tickLine={false}
+              axisLine={false}
+            />
+            <YAxis
+              tick={{ fontSize: 11, fill: '#a1a1aa' }}
+              tickLine={false}
+              axisLine={false}
+              tickFormatter={(v) => `${v.toLocaleString()} kr`}
+              domain={['dataMin - 100', 'dataMax + 100']}
+            />
+            <Tooltip content={<ComparisonTooltip colorMap={colorMap} urlMap={currentUrls} />} />
+            {activeCompetitors.map(comp => (
+              <Line
+                key={comp.id}
+                type="monotone"
+                dataKey={comp.name}
+                stroke={colorMap.get(comp.name)}
+                strokeWidth={comp.isOwn ? 2.5 : 1.5}
+                strokeDasharray={comp.isOwn ? undefined : '5 5'}
+                dot={false}
+                activeDot={{ r: comp.isOwn ? 5 : 3, strokeWidth: 0 }}
+                connectNulls
+              />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      ) : (
+        <div className="h-[350px] flex items-center justify-center text-sm text-zinc-400">
+          Ingen prisdata för vald produkt
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ComparisonTooltip({
+  active, payload, label, colorMap, urlMap,
+}: {
+  active?: boolean;
+  payload?: Array<{ value: number; dataKey: string; name: string }>;
+  label?: string;
+  colorMap: Map<string, string>;
+  urlMap: Map<string, string>;
+}) {
+  if (!active || !payload?.length) return null;
+
+  const sorted = [...payload].sort((a, b) => a.value - b.value);
+
+  return (
+    <div className="rounded-md bg-white/95 backdrop-blur px-3 py-2 shadow-md border text-xs">
+      <p className="text-[11px] text-zinc-400 mb-1.5">{label}</p>
+      {sorted.map((p) => {
+        const url = urlMap.get(p.dataKey);
+        const row = (
+          <>
+            <span
+              className="h-1.5 w-1.5 rounded-full shrink-0"
+              style={{ background: colorMap.get(p.dataKey) || '#999' }}
+            />
+            <span className="text-zinc-500 truncate">{p.dataKey}</span>
+            {url && <ExternalLink className="h-2.5 w-2.5 text-zinc-300 shrink-0" />}
+            <span className="font-medium ml-auto tabular-nums">
+              {Math.round(p.value).toLocaleString()} kr
+            </span>
+          </>
+        );
+
+        return url ? (
+          <a
+            key={p.dataKey}
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 py-0.5 hover:text-zinc-700 transition-colors cursor-pointer"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {row}
+          </a>
+        ) : (
+          <p key={p.dataKey} className="flex items-center gap-2 py-0.5">
+            {row}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Overall Price History Chart ──
+export function PriceHistoryChart({ data }: {
+  data: { date: string; avg: number; min: number }[];
+}) {
+  if (!data.length) {
+    return (
+      <div className="h-[300px] flex items-center justify-center text-sm text-zinc-400">
+        Ingen prisdata ännu
+      </div>
+    );
+  }
+
+  return (
+    <ResponsiveContainer width="100%" height={300}>
+      <AreaChart data={data} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+        <defs>
+          <linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#8b5cf6" stopOpacity={0.12} />
+            <stop offset="100%" stopColor="#8b5cf6" stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid stroke="#f3f4f6" vertical={false} />
+        <XAxis
+          dataKey="date"
+          tick={{ fontSize: 11, fill: '#a1a1aa' }}
+          tickLine={false}
+          axisLine={false}
+        />
+        <YAxis
+          tick={{ fontSize: 11, fill: '#a1a1aa' }}
+          tickLine={false}
+          axisLine={false}
+          tickFormatter={(v) => `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k`}
+          domain={['dataMin - 500', 'dataMax + 500']}
+        />
+        <Tooltip content={<OverviewTooltip />} />
+        <Area
+          type="monotone"
+          dataKey="avg"
+          stroke="#8b5cf6"
+          strokeWidth={2}
+          fill="url(#grad)"
+          dot={false}
+          activeDot={{ r: 4, fill: '#8b5cf6', strokeWidth: 0 }}
+        />
+        <Area
+          type="monotone"
+          dataKey="min"
+          stroke="#10b981"
+          strokeWidth={1.5}
+          strokeDasharray="5 5"
+          fill="none"
+          dot={false}
+          activeDot={{ r: 3, fill: '#10b981', strokeWidth: 0 }}
+        />
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+}
+
+function OverviewTooltip({ active, payload, label }: {
+  active?: boolean;
+  payload?: Array<{ value: number; dataKey: string }>;
+  label?: string;
+}) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="rounded-md bg-white/95 backdrop-blur px-3 py-2 shadow-md border text-xs">
+      <p className="text-[11px] text-zinc-400 mb-1">{label}</p>
+      {payload.map((p) => (
+        <p key={p.dataKey} className="flex items-center gap-2">
+          <span
+            className="h-1.5 w-1.5 rounded-full"
+            style={{ background: p.dataKey === 'avg' ? '#8b5cf6' : '#10b981' }}
+          />
+          <span className="text-zinc-500">{p.dataKey === 'avg' ? 'Snittpris' : 'Lägsta'}</span>
+          <span className="font-medium ml-auto">{Math.round(p.value).toLocaleString()} kr</span>
+        </p>
+      ))}
+    </div>
+  );
+}
