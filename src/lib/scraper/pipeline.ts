@@ -2,7 +2,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { discoverProductUrls, discoverFromCategoryPages } from './sitemap';
 import { renderPage } from './cloudflare';
-import { parseProductPage, normalizeName, extractModelName, extractModelKey, normalizeBrand, tokenOverlapScore, type ParsedProduct } from './parser';
+import { parseProductPage, normalizeName, extractModelName, extractModelKey, normalizeBrand, tokenOverlapScore, areTypesCompatible, type ParsedProduct } from './parser';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SupabaseServiceClient = any;
@@ -231,6 +231,26 @@ async function saveProduct(
 
   if (!variant) return;
 
+  // Price sanity check: reject if price differs >80% from existing prices for this product
+  // This prevents bundle/component mismatches (e.g., chassis matched to full duovagn package)
+  const { data: existingPrices } = await supabase
+    .from('product_prices')
+    .select('price')
+    .eq('variant_id', variant.id)
+    .order('scraped_at', { ascending: false })
+    .limit(5);
+
+  if (existingPrices && existingPrices.length > 0 && parsed.price > 0) {
+    const avgExisting = existingPrices.reduce((sum: number, p: { price: number }) => sum + p.price, 0) / existingPrices.length;
+    if (avgExisting > 0) {
+      const ratio = parsed.price / avgExisting;
+      if (ratio > 2.0 || ratio < 0.4) {
+        // Price is suspiciously different — likely a mismatch, skip
+        return;
+      }
+    }
+  }
+
   // Check if price changed since last scrape
   const { data: lastPrice } = await supabase
     .from('product_prices')
@@ -406,9 +426,14 @@ async function findProduct(
         .select('*')
         .eq('brand', parsed.brand)
         .ilike('normalized_name', allWordsPattern)
-        .limit(1)
-        .single();
-      if (data) return data;
+        .limit(5);
+      // Filter by type compatibility and pick best
+      const compatible = (data || []).filter((d: { name: string }) => areTypesCompatible(parsed.name, d.name));
+      if (compatible.length === 1) return compatible[0];
+      if (compatible.length > 1) {
+        const best = pickBestMatch(compatible, parsed.name);
+        if (best) return best;
+      }
 
       // Try with just the first model word (e.g., "fox", "fame", "sirona")
       const firstWord = modelWords.split(' ')[0];
@@ -418,11 +443,11 @@ async function findProduct(
           .select('*')
           .eq('brand', parsed.brand)
           .ilike('normalized_name', `%${firstWord}%`)
-          .limit(5);
-        if (d2 && d2.length === 1) return d2[0];
-        // If multiple matches, pick best by token overlap
-        if (d2 && d2.length > 1) {
-          const best = pickBestMatch(d2, parsed.name);
+          .limit(10);
+        const compat2 = (d2 || []).filter((d: { name: string }) => areTypesCompatible(parsed.name, d.name));
+        if (compat2.length === 1) return compat2[0];
+        if (compat2.length > 1) {
+          const best = pickBestMatch(compat2, parsed.name);
           if (best) return best;
         }
       }
@@ -440,7 +465,9 @@ async function findProduct(
       .limit(100);
 
     if (candidates && candidates.length > 0) {
-      const best = pickBestMatch(candidates, parsed.name, 0.6);
+      // Filter by type compatibility before scoring
+      const compatible = candidates.filter((c: { name: string }) => areTypesCompatible(parsed.name, c.name));
+      const best = pickBestMatch(compatible, parsed.name, 0.6);
       if (best) return best;
     }
   }

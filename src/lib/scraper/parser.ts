@@ -149,6 +149,61 @@ const MODEL_STRIP_WORDS = [
   'stroller', 'pushchair', 'pram', 'car', 'seat',
 ];
 
+// Product type categories for matching discrimination
+// A "duovagn paket" should NOT match a standalone "sittvagn"
+const BUNDLE_INDICATORS = ['paket', 'komplett', 'set', 'bundle', 'barnvagnspaket', 'vagnspaket', 'kombivagn', 'inkl', 'inklusive'];
+const PRODUCT_TYPES: Record<string, string> = {
+  'duovagn': 'duovagn',
+  'sittvagn': 'sittvagn',
+  'liggvagn': 'liggvagn',
+  'syskonvagn': 'syskonvagn',
+  'joggingvagn': 'joggingvagn',
+  'sulky': 'sittvagn',
+  'buggy': 'sittvagn',
+  'bilbarnstol': 'bilstol',
+  'bilstol': 'bilstol',
+  'bälteskudde': 'bälteskudde',
+  'bältesstol': 'bältesstol',
+  'babyskydd': 'babyskydd',
+  'skidor': 'tillbehör',
+  'åkpåse': 'tillbehör',
+  'regnskydd': 'tillbehör',
+  'adapter': 'tillbehör',
+  'sufflett': 'tillbehör',
+  'mugghållare': 'tillbehör',
+  'fotsack': 'tillbehör',
+};
+
+// Detect if a product name indicates a bundle/package
+export function isBundle(name: string): boolean {
+  const lower = name.toLowerCase();
+  return BUNDLE_INDICATORS.some(w => lower.includes(w));
+}
+
+// Extract the product type from a name
+export function extractProductType(name: string): string | null {
+  const lower = name.toLowerCase();
+  for (const [keyword, type] of Object.entries(PRODUCT_TYPES)) {
+    if (lower.includes(keyword)) return type;
+  }
+  return null;
+}
+
+// Check if two product names are type-compatible for matching
+export function areTypesCompatible(nameA: string, nameB: string): boolean {
+  const bundleA = isBundle(nameA);
+  const bundleB = isBundle(nameB);
+  // A bundle should not match a non-bundle
+  if (bundleA !== bundleB) return false;
+
+  const typeA = extractProductType(nameA);
+  const typeB = extractProductType(nameB);
+  // If both have types, they must match
+  if (typeA && typeB && typeA !== typeB) return false;
+
+  return true;
+}
+
 // Extract a canonical model key for cross-store matching.
 // e.g., "Maxi-Cosi Fame Sittvagn Twillic Truffle" → "maxi-cosi fame"
 //       "Fame Sittvagn - Twillic" → "maxi-cosi fame" (when brand detected)
