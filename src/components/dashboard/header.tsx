@@ -20,9 +20,10 @@ interface HeaderProps {
   userEmail: string;
   unreadAlerts?: number;
   onMenuClick?: () => void;
+  showSearch?: boolean;
 }
 
-export function Header({ title, subtitle, userEmail, unreadAlerts = 0, onMenuClick }: HeaderProps) {
+export function Header({ title, subtitle, userEmail, unreadAlerts = 0, onMenuClick, showSearch = false }: HeaderProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const router = useRouter();
 
@@ -56,18 +57,20 @@ export function Header({ title, subtitle, userEmail, unreadAlerts = 0, onMenuCli
           </div>
         </div>
 
-        <form onSubmit={handleSearch} className="hidden sm:flex flex-1 max-w-md">
-          <div className="relative w-full">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[#6B7280]" />
-            <Input
-              type="text"
-              placeholder="Sök produkter..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10 pr-4 py-2.5 w-full bg-[#F5F5F4] border border-[#E5E7EB] rounded-xl focus:bg-white transition-colors"
-            />
-          </div>
-        </form>
+        {showSearch && (
+          <form onSubmit={handleSearch} className="hidden sm:flex flex-1 max-w-md">
+            <div className="relative w-full">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[#6B7280]" />
+              <Input
+                type="text"
+                placeholder="Sök produkter..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10 pr-4 py-2.5 w-full bg-[#F5F5F4] border border-[#E5E7EB] rounded-xl focus:bg-white transition-colors"
+              />
+            </div>
+          </form>
+        )}
 
         <div className="flex items-center gap-2 md:gap-4">
           <Button

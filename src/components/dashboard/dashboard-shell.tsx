@@ -11,6 +11,7 @@ const PAGE_TITLES: Record<string, { title: string; subtitle?: string }> = {
   '/dashboard': { title: 'Dashboard', subtitle: 'Översikt av prisövervakning' },
   '/products': { title: 'Produkter', subtitle: 'Hantera produkter och priser' },
   '/alerts': { title: 'Larm', subtitle: 'Prisförändringar och notifikationer' },
+  '/database': { title: 'Databas', subtitle: 'Dagliga prisrapporter' },
 };
 
 export function DashboardShell({
@@ -23,7 +24,7 @@ export function DashboardShell({
   unreadAlerts: number;
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [aiState, setAiState] = useState<'closed' | 'minimized' | 'open'>('closed');
   const pathname = usePathname();
 
@@ -53,6 +54,7 @@ export function DashboardShell({
           userEmail={userEmail}
           unreadAlerts={unreadAlerts}
           onMenuClick={() => setSidebarOpen(true)}
+          showSearch={pathname === '/products'}
         />
 
         <div className="flex-1 flex overflow-hidden">

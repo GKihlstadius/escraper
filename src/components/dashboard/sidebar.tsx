@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import {
-  LayoutDashboard, Package, Bell,
+  LayoutDashboard, Package, Bell, Database,
   LogOut, RefreshCw, X, ChevronsLeft, ChevronsRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,7 @@ const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/products', label: 'Produkter', icon: Package },
   { href: '/alerts', label: 'Larm', icon: Bell },
+  { href: '/database', label: 'Databas', icon: Database },
 ];
 
 interface SidebarProps {
@@ -131,25 +132,24 @@ export function Sidebar({ userEmail, isOpen, collapsed, onClose, onToggleCollaps
             </>
           ) : (
             <>
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full border-[#7C3AED]/30 text-[#7C3AED] hover:bg-[#7C3AED]/5"
-                onClick={handleScrape}
-                disabled={scraping}
-              >
-                <RefreshCw className={`h-4 w-4 mr-2 ${scraping ? 'animate-spin' : ''}`} />
-                {scraping ? 'Scrapar...' : 'Scrapa nu'}
-              </Button>
-
               <div className="flex items-center justify-between">
                 <span className="text-xs text-[#6B7280] truncate">{userEmail}</span>
-                <button
-                  onClick={handleLogout}
-                  className="p-2 rounded-xl text-[#6B7280] hover:bg-red-50 hover:text-red-600 transition-all"
-                >
-                  <LogOut className="h-4 w-4" />
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={handleScrape}
+                    disabled={scraping}
+                    title="Manuell scraping"
+                    className="p-2 rounded-xl text-[#6B7280] hover:bg-[#7C3AED]/5 hover:text-[#7C3AED] transition-all disabled:opacity-50"
+                  >
+                    <RefreshCw className={cn("h-3.5 w-3.5", scraping && "animate-spin")} />
+                  </button>
+                  <button
+                    onClick={handleLogout}
+                    className="p-2 rounded-xl text-[#6B7280] hover:bg-red-50 hover:text-red-600 transition-all"
+                  >
+                    <LogOut className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
             </>
           )}

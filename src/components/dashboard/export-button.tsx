@@ -12,9 +12,9 @@ export function ExportButton() {
     try {
       const supabase = createClient();
 
-      // Fetch last 30 days of data
+      // Fetch today's data
       const since = new Date();
-      since.setDate(since.getDate() - 30);
+      since.setHours(0, 0, 0, 0);
 
       const [{ data: prices }, { data: products }, { data: variants }, { data: competitors }] = await Promise.all([
         supabase
@@ -106,10 +106,12 @@ export function ExportButton() {
     <button
       onClick={handleExport}
       disabled={loading}
-      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-zinc-500 hover:text-zinc-700 bg-white border border-zinc-200 rounded-lg hover:bg-zinc-50 transition-colors disabled:opacity-50"
+      className="w-full flex items-center justify-between px-3 py-2 text-sm rounded-lg border border-zinc-100 text-zinc-600 hover:bg-zinc-50 transition-colors disabled:opacity-50"
     >
-      <Download className="h-3.5 w-3.5" />
-      {loading ? 'Exporterar...' : 'Exportera 30 dagar'}
+      <span className="flex items-center gap-2">
+        <Download className="h-3.5 w-3.5" />
+        {loading ? 'Exporterar...' : 'Exportera dagsdata'}
+      </span>
     </button>
   );
 }

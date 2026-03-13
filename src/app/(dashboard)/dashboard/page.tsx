@@ -2,23 +2,31 @@ import { createClient } from '@/lib/supabase/server';
 import { ProductPriceComparison } from '@/components/dashboard/price-charts';
 import { ExportButton } from '@/components/dashboard/export-button';
 import Link from 'next/link';
+import {
+  ArrowDown, ArrowUp, Package, TrendingDown, TrendingUp,
+  Lightbulb, BarChart3, Activity,
+} from 'lucide-react';
 
 export default async function DashboardPage() {
   const supabase = await createClient();
 
   // ── Core queries ──
-  const [productsRes, competitorsRes, priceDropsRes, priceIncreasesRes, recsRes, variantsRes] = await Promise.all([
+  const [productsRes, competitorsRes, priceDropsRes, priceIncreasesRes, recsRes, variantsRes, recentAlertsRes, lastScrapeRes] = await Promise.all([
     supabase.from('products').select('id, name, brand').eq('is_active', true),
     supabase.from('competitors').select('id, name, is_own_store, color').eq('is_active', true),
     supabase.from('alerts').select('id', { count: 'exact', head: true }).eq('type', 'PRICE_DROP').eq('is_read', false),
     supabase.from('alerts').select('id', { count: 'exact', head: true }).eq('type', 'PRICE_INCREASE').eq('is_read', false),
     supabase.from('price_recommendations').select('id', { count: 'exact', head: true }).eq('status', 'PENDING'),
     supabase.from('product_variants').select('id, product_id'),
+    supabase.from('alerts').select('id, type, title, severity, created_at').order('created_at', { ascending: false }).limit(5),
+    supabase.from('scraping_logs').select('created_at, status, products_scraped').order('created_at', { ascending: false }).limit(1),
   ]);
 
   const products = productsRes.data || [];
   const competitors = competitorsRes.data || [];
   const variants = variantsRes.data || [];
+  const recentAlerts = recentAlertsRes.data || [];
+  const lastScrape = lastScrapeRes.data?.[0] || null;
   const ownStoreIds = new Set(competitors.filter(c => c.is_own_store).map(c => c.id));
   const variantToProduct = new Map(variants.map(v => [v.id, v.product_id]));
 
@@ -30,9 +38,8 @@ export default async function DashboardPage() {
   const prices = allPrices || [];
 
   // ── Product price comparison data ──
-  // Group prices by product → competitor → date, and track URLs
   const productPriceMap = new Map<string, Map<string, Map<string, number>>>();
-  const productUrlMap = new Map<string, Map<string, string>>(); // product → competitor → url
+  const productUrlMap = new Map<string, Map<string, string>>();
   for (const p of prices) {
     const productId = variantToProduct.get(p.variant_id);
     if (!productId) continue;
@@ -42,14 +49,12 @@ export default async function DashboardPage() {
     const dateMap = compMap.get(p.competitor_id)!;
     const date = p.scraped_at.slice(0, 10);
     dateMap.set(date, p.price);
-    // Keep latest URL per product+competitor
     if (p.url) {
       if (!productUrlMap.has(productId)) productUrlMap.set(productId, new Map());
       productUrlMap.get(productId)!.set(p.competitor_id, p.url);
     }
   }
 
-  // Only include products that have prices from 2+ competitors
   const comparisonProducts = products
     .filter(p => {
       const compMap = productPriceMap.get(p.id);
@@ -58,7 +63,6 @@ export default async function DashboardPage() {
     .sort((a, b) => a.name.localeCompare(b.name, 'sv'))
     .map(p => ({ id: p.id, name: p.name, brand: p.brand }));
 
-  // Build serializable price data: { [productId]: { [competitorId]: { [date]: price } } }
   const comparisonPrices: Record<string, Record<string, Record<string, number>>> = {};
   for (const prod of comparisonProducts) {
     const compMap = productPriceMap.get(prod.id);
@@ -69,7 +73,6 @@ export default async function DashboardPage() {
     }
   }
 
-  // Build URL map: { [productId]: { [competitorId]: url } }
   const comparisonUrls: Record<string, Record<string, string>> = {};
   for (const prod of comparisonProducts) {
     const urlMap = productUrlMap.get(prod.id);
@@ -103,83 +106,179 @@ export default async function DashboardPage() {
   }
   const positioned = cheapest + mid + expensive;
   const cheapestPct = positioned > 0 ? Math.round((cheapest / positioned) * 100) : 0;
+  const expensivePct = positioned > 0 ? Math.round((expensive / positioned) * 100) : 0;
 
   const totalProducts = products.length;
   const drops = priceDropsRes.count || 0;
   const increases = priceIncreasesRes.count || 0;
   const recs = recsRes.count || 0;
 
+  const TYPE_ICONS: Record<string, string> = {
+    PRICE_DROP: 'emerald',
+    PRICE_INCREASE: 'red',
+    STOCK_CHANGE: 'blue',
+    NEW_CAMPAIGN: 'amber',
+  };
+
   return (
-    <div className="space-y-10">
-      {/* ── Metrics ── */}
-      <div className="grid grid-cols-3 md:grid-cols-6 gap-y-6">
-        <MetricItem label="Produkter" value={totalProducts} href="/products" />
-        <MetricItem label="Billigast på" value={`${cheapestPct}%`} sub={`${cheapest} av ${positioned}`} />
-        <MetricItem label="Dyrast på" value={`${positioned > 0 ? Math.round((expensive / positioned) * 100) : 0}%`} sub={`${expensive} av ${positioned}`} />
-        <MetricItem label="Prissänkningar" value={drops} href="/alerts" dot="emerald" />
-        <MetricItem label="Prishöjningar" value={increases} href="/alerts" dot="red" />
-        <MetricItem label="Åtgärder" value={recs} href="/recommendations" dot={recs > 0 ? 'amber' : undefined} />
+    <div className="space-y-8">
+      {/* ── Status bar ── */}
+      {lastScrape && (
+        <div className="flex items-center gap-2 text-xs text-zinc-400">
+          <Activity className="h-3 w-3" />
+          <span>
+            Senaste scrape: {new Date(lastScrape.created_at).toLocaleString('sv-SE')}
+            {lastScrape.status === 'SUCCESS' && ` — ${lastScrape.products_scraped} produkter`}
+          </span>
+          <span className={`h-1.5 w-1.5 rounded-full ${lastScrape.status === 'SUCCESS' ? 'bg-emerald-400' : 'bg-red-400'}`} />
+        </div>
+      )}
+
+      {/* ── KPI Cards ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <KpiCard
+          title="Produkter"
+          value={totalProducts}
+          icon={<Package className="h-4 w-4" />}
+          href="/products"
+          subtitle={`${competitors.filter(c => !c.is_own_store).length} konkurrenter`}
+        />
+        <KpiCard
+          title="Prisposition"
+          value={`${cheapestPct}%`}
+          icon={<BarChart3 className="h-4 w-4" />}
+          subtitle={`Billigast på ${cheapest} av ${positioned}`}
+          accent={cheapestPct >= 50 ? 'emerald' : cheapestPct >= 30 ? 'amber' : 'red'}
+        />
+        <KpiCard
+          title="Prissänkningar"
+          value={drops}
+          icon={<TrendingDown className="h-4 w-4" />}
+          href="/alerts"
+          accent="emerald"
+          subtitle="Olästa larm"
+        />
+        <KpiCard
+          title="Prishöjningar"
+          value={increases}
+          icon={<TrendingUp className="h-4 w-4" />}
+          href="/alerts"
+          accent="red"
+          subtitle="Olästa larm"
+        />
       </div>
 
-      {/* ── Position bar ── */}
-      {positioned > 0 && (
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-xs text-zinc-400 uppercase tracking-wider font-medium">Prisposition</p>
-            <div className="flex gap-4 text-[11px] text-zinc-400">
-              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" />Billigast</span>
-              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-zinc-200" />Mellanpris</span>
-              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-red-400" />Dyrast</span>
+      {/* ── Position bar + Actions row ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Position bar */}
+        {positioned > 0 && (
+          <div className="lg:col-span-2 bg-white rounded-xl border border-zinc-100 p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-medium text-zinc-900">Prisposition</h3>
+              <div className="flex gap-4 text-[11px] text-zinc-400">
+                <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500" />Billigast</span>
+                <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-zinc-200" />Mellan</span>
+                <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-red-400" />Dyrast</span>
+              </div>
+            </div>
+            <div className="flex h-3 rounded-full overflow-hidden bg-zinc-50">
+              {cheapest > 0 && <div className="bg-emerald-500 rounded-l-full transition-all" style={{ width: `${(cheapest / positioned) * 100}%` }} />}
+              {mid > 0 && <div className="bg-zinc-200 transition-all" style={{ width: `${(mid / positioned) * 100}%` }} />}
+              {expensive > 0 && <div className="bg-red-400 rounded-r-full transition-all" style={{ width: `${(expensive / positioned) * 100}%` }} />}
+            </div>
+            <div className="flex justify-between mt-3 text-xs text-zinc-400">
+              <span>{cheapest} produkter</span>
+              <span>{mid} produkter</span>
+              <span>{expensive} produkter</span>
             </div>
           </div>
-          <div className="flex h-2 rounded-full overflow-hidden bg-zinc-100">
-            {cheapest > 0 && <div className="bg-emerald-500" style={{ width: `${(cheapest / positioned) * 100}%` }} />}
-            {mid > 0 && <div className="bg-zinc-200" style={{ width: `${(mid / positioned) * 100}%` }} />}
-            {expensive > 0 && <div className="bg-red-400" style={{ width: `${(expensive / positioned) * 100}%` }} />}
+        )}
+
+        {/* Quick actions */}
+        <div className="bg-white rounded-xl border border-zinc-100 p-5 flex flex-col justify-between">
+          <h3 className="text-sm font-medium text-zinc-900 mb-3">Snabblänkar</h3>
+          <div className="space-y-2">
+            {recs > 0 && (
+              <Link
+                href="/recommendations"
+                className="flex items-center justify-between px-3 py-2 rounded-lg bg-amber-50 border border-amber-100 text-sm hover:bg-amber-100 transition-colors"
+              >
+                <span className="flex items-center gap-2 text-amber-700">
+                  <Lightbulb className="h-3.5 w-3.5" />
+                  {recs} åtgärdsförslag
+                </span>
+                <ArrowUp className="h-3 w-3 text-amber-500 rotate-90" />
+              </Link>
+            )}
+            <ExportButton />
+          </div>
+        </div>
+      </div>
+
+      {/* ── Recent activity ── */}
+      {recentAlerts.length > 0 && (
+        <div className="bg-white rounded-xl border border-zinc-100 p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-medium text-zinc-900">Senaste händelser</h3>
+            <Link href="/alerts" className="text-xs text-violet-600 hover:text-violet-700 transition-colors">
+              Visa alla
+            </Link>
+          </div>
+          <div className="space-y-3">
+            {recentAlerts.map((alert: { id: string; type: string; title: string; severity: string; created_at: string }) => (
+              <div key={alert.id} className="flex items-center gap-3">
+                <span className={`h-2 w-2 rounded-full shrink-0 ${
+                  alert.type === 'PRICE_DROP' ? 'bg-emerald-500' :
+                  alert.type === 'PRICE_INCREASE' ? 'bg-red-400' :
+                  alert.type === 'STOCK_CHANGE' ? 'bg-blue-400' :
+                  'bg-amber-400'
+                }`} />
+                <span className="text-sm text-zinc-700 truncate flex-1">{alert.title}</span>
+                <span className="text-[11px] text-zinc-400 shrink-0 tabular-nums">
+                  {new Date(alert.created_at).toLocaleDateString('sv-SE', { day: 'numeric', month: 'short' })}
+                </span>
+              </div>
+            ))}
           </div>
         </div>
       )}
 
-      {/* ── Export ── */}
-      <div className="flex justify-end">
-        <ExportButton />
-      </div>
-
       {/* ── Product Price Comparison ── */}
-      <ProductPriceComparison
-        products={comparisonProducts}
-        competitors={comparisonCompetitors}
-        prices={comparisonPrices}
-        urls={comparisonUrls}
-      />
-
+      <div className="bg-white rounded-xl border border-zinc-100 p-5">
+        <ProductPriceComparison
+          products={comparisonProducts}
+          competitors={comparisonCompetitors}
+          prices={comparisonPrices}
+          urls={comparisonUrls}
+        />
+      </div>
     </div>
   );
 }
 
-function MetricItem({
-  label, value, sub, href, dot,
+function KpiCard({
+  title, value, subtitle, icon, href, accent,
 }: {
-  label: string;
+  title: string;
   value: number | string;
-  sub?: string;
+  subtitle?: string;
+  icon: React.ReactNode;
   href?: string;
-  dot?: 'emerald' | 'red' | 'amber';
+  accent?: 'emerald' | 'red' | 'amber';
 }) {
-  const dotColor = dot === 'emerald' ? 'bg-emerald-500' : dot === 'red' ? 'bg-red-500' : dot === 'amber' ? 'bg-amber-500' : null;
+  const accentBorder = accent === 'emerald' ? 'border-l-emerald-500'
+    : accent === 'red' ? 'border-l-red-400'
+    : accent === 'amber' ? 'border-l-amber-400'
+    : 'border-l-transparent';
 
   const inner = (
-    <div className={href ? 'cursor-pointer group' : ''}>
-      <div className="flex items-center gap-1.5 mb-0.5">
-        {dotColor && <span className={`h-1.5 w-1.5 rounded-full ${dotColor}`} />}
-        <span className="text-xs text-zinc-400 uppercase tracking-wider font-medium group-hover:text-zinc-600 transition-colors">
-          {label}
-        </span>
+    <div className={`bg-white rounded-xl border border-zinc-100 border-l-[3px] ${accentBorder} p-5 ${href ? 'hover:shadow-md hover:border-zinc-200 transition-all cursor-pointer' : ''}`}>
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-xs text-zinc-400 uppercase tracking-wider font-medium">{title}</span>
+        <span className="text-zinc-300">{icon}</span>
       </div>
-      <div className="flex items-baseline gap-1.5">
-        <span className="text-2xl font-semibold tabular-nums">{value}</span>
-        {sub && <span className="text-xs text-zinc-400">{sub}</span>}
-      </div>
+      <div className="text-2xl font-semibold tabular-nums text-zinc-900">{value}</div>
+      {subtitle && <p className="text-xs text-zinc-400 mt-1">{subtitle}</p>}
     </div>
   );
 
