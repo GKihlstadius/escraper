@@ -14,7 +14,7 @@ const PALETTE = [
 ];
 
 type CompetitorInfo = { id: string; name: string; isOwn: boolean; color: string };
-type ProductInfo = { id: string; name: string; brand: string };
+type ProductInfo = { id: string; name: string; brand: string; storeCount?: number };
 
 export function ProductPriceComparison({
   products,
@@ -120,24 +120,40 @@ export function ProductPriceComparison({
               {filtered.length === 0 ? (
                 <div className="px-3 py-2 text-sm text-zinc-400">Inga träffar</div>
               ) : (
-                filtered.slice(0, 50).map(p => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      setSelectedProductId(p.id);
-                      setSearch('');
-                      setOpen(false);
-                    }}
-                    className={`w-full text-left px-3 py-1.5 text-sm hover:bg-zinc-50 transition-colors ${
-                      p.id === selectedProductId ? 'bg-zinc-50 font-medium' : ''
-                    }`}
-                  >
-                    <span className="text-zinc-400 mr-1">{p.brand}</span>
-                    {p.name}
-                  </button>
-                ))
+                <>
+                  <div className="px-3 py-1.5 text-[11px] text-zinc-400 border-b border-zinc-100">
+                    {filtered.length} produkter
+                  </div>
+                  {filtered.slice(0, 80).map(p => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setSelectedProductId(p.id);
+                        setSearch('');
+                        setOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-zinc-50 transition-colors flex items-center justify-between ${
+                        p.id === selectedProductId ? 'bg-zinc-50 font-medium' : ''
+                      }`}
+                    >
+                      <span>
+                        <span className="text-zinc-400 mr-1">{p.brand}</span>
+                        {p.name}
+                      </span>
+                      {p.storeCount !== undefined && (
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ml-2 ${
+                          p.storeCount >= 3 ? 'bg-emerald-50 text-emerald-600' :
+                          p.storeCount >= 2 ? 'bg-blue-50 text-blue-600' :
+                          'bg-zinc-50 text-zinc-400'
+                        }`}>
+                          {p.storeCount} {p.storeCount === 1 ? 'butik' : 'butiker'}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </>
               )}
             </div>
           )}

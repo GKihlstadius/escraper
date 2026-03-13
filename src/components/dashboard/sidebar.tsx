@@ -41,11 +41,12 @@ export function Sidebar({ userEmail, isOpen, collapsed, onClose, onToggleCollaps
   async function handleScrape() {
     setScraping(true);
     try {
-      await fetch('/api/scrape', { method: 'POST', body: '{}' });
-      router.refresh();
+      const res = await fetch('/api/scrape', { method: 'POST', body: '{}' });
+      const data = await res.json().catch(() => null);
+      // Force full page reload to show updated data
+      window.location.reload();
     } catch (err) {
       console.error('Scrape failed:', err);
-    } finally {
       setScraping(false);
     }
   }

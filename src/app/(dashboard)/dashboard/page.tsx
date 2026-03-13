@@ -3,29 +3,29 @@ import { ProductPriceComparison } from '@/components/dashboard/price-charts';
 import { ExportButton } from '@/components/dashboard/export-button';
 import Link from 'next/link';
 import {
-  ArrowDown, ArrowUp, Package, TrendingDown, TrendingUp,
+  ArrowUp, Package, TrendingDown, TrendingUp,
   Lightbulb, BarChart3, Activity,
 } from 'lucide-react';
+
+export const dynamic = 'force-dynamic';
 
 export default async function DashboardPage() {
   const supabase = await createClient();
 
   // ── Core queries ──
-  const [productsRes, competitorsRes, priceDropsRes, priceIncreasesRes, recsRes, variantsRes, recentAlertsRes, lastScrapeRes] = await Promise.all([
+  const [productsRes, competitorsRes, priceDropsRes, priceIncreasesRes, recsRes, variantsRes, lastScrapeRes] = await Promise.all([
     supabase.from('products').select('id, name, brand').eq('is_active', true),
     supabase.from('competitors').select('id, name, is_own_store, color').eq('is_active', true),
     supabase.from('alerts').select('id', { count: 'exact', head: true }).eq('type', 'PRICE_DROP').eq('is_read', false),
     supabase.from('alerts').select('id', { count: 'exact', head: true }).eq('type', 'PRICE_INCREASE').eq('is_read', false),
     supabase.from('price_recommendations').select('id', { count: 'exact', head: true }).eq('status', 'PENDING'),
     supabase.from('product_variants').select('id, product_id'),
-    supabase.from('alerts').select('id, type, title, severity, created_at').order('created_at', { ascending: false }).limit(5),
     supabase.from('scraping_logs').select('created_at, status, products_scraped').order('created_at', { ascending: false }).limit(1),
   ]);
 
   const products = productsRes.data || [];
   const competitors = competitorsRes.data || [];
   const variants = variantsRes.data || [];
-  const recentAlerts = recentAlertsRes.data || [];
   const lastScrape = lastScrapeRes.data?.[0] || null;
   const ownStoreIds = new Set(competitors.filter(c => c.is_own_store).map(c => c.id));
   const variantToProduct = new Map(variants.map(v => [v.id, v.product_id]));
@@ -55,13 +55,17 @@ export default async function DashboardPage() {
     }
   }
 
+  // Include ALL products with any price data
   const comparisonProducts = products
-    .filter(p => {
-      const compMap = productPriceMap.get(p.id);
-      return compMap && compMap.size >= 2;
+    .filter(p => productPriceMap.has(p.id))
+    .sort((a, b) => {
+      // Products with more competitors first
+      const aSize = productPriceMap.get(a.id)?.size || 0;
+      const bSize = productPriceMap.get(b.id)?.size || 0;
+      if (bSize !== aSize) return bSize - aSize;
+      return a.name.localeCompare(b.name, 'sv');
     })
-    .sort((a, b) => a.name.localeCompare(b.name, 'sv'))
-    .map(p => ({ id: p.id, name: p.name, brand: p.brand }));
+    .map(p => ({ id: p.id, name: p.name, brand: p.brand, storeCount: productPriceMap.get(p.id)?.size || 0 }));
 
   const comparisonPrices: Record<string, Record<string, Record<string, number>>> = {};
   for (const prod of comparisonProducts) {
@@ -130,7 +134,7 @@ export default async function DashboardPage() {
             Senaste scrape: {new Date(lastScrape.created_at).toLocaleString('sv-SE')}
             {lastScrape.status === 'SUCCESS' && ` — ${lastScrape.products_scraped} produkter`}
           </span>
-          <span className={`h-1.5 w-1.5 rounded-full ${lastScrape.status === 'SUCCESS' ? 'bg-emerald-400' : 'bg-red-400'}`} />
+          <span className={`h-1.5 w-1.5 rounded-full ${lastScrape.status === 'SUCCESS' ? 'bg-emerald-400' : lastScrape.status === 'RUNNING' ? 'bg-amber-400 animate-pulse' : 'bg-red-400'}`} />
         </div>
       )}
 
@@ -214,34 +218,6 @@ export default async function DashboardPage() {
           </div>
         </div>
       </div>
-
-      {/* ── Recent activity ── */}
-      {recentAlerts.length > 0 && (
-        <div className="bg-white rounded-xl border border-zinc-100 p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-medium text-zinc-900">Senaste händelser</h3>
-            <Link href="/alerts" className="text-xs text-violet-600 hover:text-violet-700 transition-colors">
-              Visa alla
-            </Link>
-          </div>
-          <div className="space-y-3">
-            {recentAlerts.map((alert: { id: string; type: string; title: string; severity: string; created_at: string }) => (
-              <div key={alert.id} className="flex items-center gap-3">
-                <span className={`h-2 w-2 rounded-full shrink-0 ${
-                  alert.type === 'PRICE_DROP' ? 'bg-emerald-500' :
-                  alert.type === 'PRICE_INCREASE' ? 'bg-red-400' :
-                  alert.type === 'STOCK_CHANGE' ? 'bg-blue-400' :
-                  'bg-amber-400'
-                }`} />
-                <span className="text-sm text-zinc-700 truncate flex-1">{alert.title}</span>
-                <span className="text-[11px] text-zinc-400 shrink-0 tabular-nums">
-                  {new Date(alert.created_at).toLocaleDateString('sv-SE', { day: 'numeric', month: 'short' })}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* ── Product Price Comparison ── */}
       <div className="bg-white rounded-xl border border-zinc-100 p-5">
