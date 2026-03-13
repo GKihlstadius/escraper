@@ -57,7 +57,7 @@ export function DashboardShell({
           showSearch={pathname === '/products'}
         />
 
-        <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 flex overflow-hidden relative">
           {/* Page content */}
           <main className="flex-1 overflow-auto">
             <div className="p-3 sm:p-4 md:p-6 max-w-7xl mx-auto">
@@ -65,10 +65,12 @@ export function DashboardShell({
             </div>
           </main>
 
-          {/* AI Panel — inline on desktop when open */}
+          {/* AI Panel — fixed on desktop when open */}
           {aiOpen && (
-            <div className="hidden sm:flex w-[340px] lg:w-[420px] flex-shrink-0 h-[calc(100vh-73px)]">
-              <AIPanel panelState={aiState} onStateChange={setAiState} />
+            <div className="hidden sm:block w-[340px] lg:w-[420px] flex-shrink-0">
+              <div className="fixed top-[73px] right-0 bottom-0 w-[340px] lg:w-[420px]">
+                <AIPanel panelState={aiState} onStateChange={setAiState} />
+              </div>
             </div>
           )}
         </div>
