@@ -23,11 +23,6 @@ interface Alert {
   competitor_id: string | null;
 }
 
-interface ProductPrice {
-  url: string;
-  competitor_id: string;
-}
-
 const TYPE_LABELS: Record<string, string> = {
   PRICE_DROP: 'Prissänkning',
   PRICE_INCREASE: 'Prishöjning',
@@ -56,13 +51,21 @@ const BORDER_COLORS: Record<string, string> = {
   NEW_CAMPAIGN: 'border-l-amber-500',
 };
 
+interface OwnPriceInfo {
+  price: number;
+  storeName: string;
+}
+
 export default function AlertsPage() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState('alla');
   const [severityFilter, setSeverityFilter] = useState('alla');
-  // Map: productId+competitorId -> external URL
   const [urlMap, setUrlMap] = useState<Map<string, string>>(new Map());
+  // Map: productId -> { price, storeName } for own stores
+  const [ownPriceMap, setOwnPriceMap] = useState<Map<string, OwnPriceInfo>>(new Map());
+  // Set of product IDs that have prices from own stores
+  const [ownProductIds, setOwnProductIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     loadAlerts();
@@ -71,25 +74,31 @@ export default function AlertsPage() {
   async function loadAlerts() {
     const supabase = createClient();
 
-    // Fetch alerts
-    const { data } = await supabase
-      .from('alerts')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(200);
+    // Fetch alerts + competitors (to know which are own stores)
+    const [{ data }, { data: competitors }] = await Promise.all([
+      supabase
+        .from('alerts')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(200),
+      supabase
+        .from('competitors')
+        .select('id, name, is_own_store')
+        .eq('is_active', true),
+    ]);
 
     const alertData = (data || []) as Alert[];
     setAlerts(alertData);
 
-    // Fetch URLs for alerts that have product_id + competitor_id
-    const productCompPairs = alertData
-      .filter(a => a.product_id && a.competitor_id)
-      .map(a => ({ pid: a.product_id!, cid: a.competitor_id! }));
+    const ownStores = (competitors || []).filter(c => c.is_own_store);
+    const ownStoreIds = new Set(ownStores.map(c => c.id));
+    const ownStoreNames = new Map(ownStores.map(c => [c.id, c.name]));
 
-    if (productCompPairs.length > 0) {
-      const productIds = [...new Set(productCompPairs.map(p => p.pid))];
+    // Get product IDs from alerts
+    const productIds = [...new Set(alertData.filter(a => a.product_id).map(a => a.product_id!))];
 
-      // Get variant IDs for these products
+    if (productIds.length > 0) {
+      // Get variants for these products
       const { data: variants } = await supabase
         .from('product_variants')
         .select('id, product_id')
@@ -99,21 +108,48 @@ export default function AlertsPage() {
         const variantIds = variants.map(v => v.id);
         const variantToProduct = new Map(variants.map(v => [v.id, v.product_id]));
 
-        // Get latest prices with URLs
+        // Get latest prices
         const { data: prices } = await supabase
           .from('product_prices')
-          .select('variant_id, competitor_id, url')
+          .select('variant_id, competitor_id, price, url')
           .in('variant_id', variantIds)
           .order('scraped_at', { ascending: false });
 
-        const map = new Map<string, string>();
+        const urlMapNew = new Map<string, string>();
+        const ownPriceMapNew = new Map<string, OwnPriceInfo>();
+        const ownProductIdsNew = new Set<string>();
+        const seenOwn = new Set<string>();
+
         for (const p of prices || []) {
           const productId = variantToProduct.get(p.variant_id);
-          if (!productId || !p.url) continue;
-          const key = `${productId}:${p.competitor_id}`;
-          if (!map.has(key)) map.set(key, p.url);
+          if (!productId) continue;
+
+          // Track external URLs
+          if (p.url) {
+            const urlKey = `${productId}:${p.competitor_id}`;
+            if (!urlMapNew.has(urlKey)) urlMapNew.set(urlKey, p.url);
+          }
+
+          // Track own store prices (keep cheapest)
+          if (ownStoreIds.has(p.competitor_id)) {
+            ownProductIdsNew.add(productId);
+            const key = productId;
+            if (!seenOwn.has(`${productId}:${p.competitor_id}`)) {
+              seenOwn.add(`${productId}:${p.competitor_id}`);
+              const existing = ownPriceMapNew.get(key);
+              if (!existing || p.price < existing.price) {
+                ownPriceMapNew.set(key, {
+                  price: p.price,
+                  storeName: ownStoreNames.get(p.competitor_id) || 'Vår butik',
+                });
+              }
+            }
+          }
         }
-        setUrlMap(map);
+
+        setUrlMap(urlMapNew);
+        setOwnPriceMap(ownPriceMapNew);
+        setOwnProductIds(ownProductIdsNew);
       }
     }
 
@@ -204,6 +240,9 @@ export default function AlertsPage() {
               ? urlMap.get(`${alert.product_id}:${alert.competitor_id}`)
               : null;
 
+            const ownPrice = alert.product_id ? ownPriceMap.get(alert.product_id) : null;
+            const hasOwnProduct = alert.product_id ? ownProductIds.has(alert.product_id) : false;
+
             return (
               <Card
                 key={alert.id}
@@ -224,6 +263,21 @@ export default function AlertsPage() {
                     </div>
                     <p className="font-medium text-sm">{alert.title}</p>
                     <p className="text-sm text-muted-foreground mt-0.5">{alert.message}</p>
+
+                    {/* Own store price info */}
+                    {alert.product_id && (
+                      <div className="mt-2">
+                        {ownPrice ? (
+                          <span className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-md bg-violet-50 text-violet-700 border border-violet-100">
+                            Vårt pris ({ownPrice.storeName}): <span className="font-semibold tabular-nums">{Math.round(ownPrice.price).toLocaleString()} kr</span>
+                          </span>
+                        ) : !hasOwnProduct ? (
+                          <span className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-md bg-zinc-50 text-zinc-400 border border-zinc-100">
+                            Vi säljer inte denna produkt
+                          </span>
+                        ) : null}
+                      </div>
+                    )}
 
                     {/* Links */}
                     <div className="flex items-center gap-3 mt-2">

@@ -1,16 +1,14 @@
 'use client';
 
 import { useState } from 'react';
-import { Search, Bell, User, ChevronDown, Menu as MenuIcon } from 'lucide-react';
+import { Search, User, ChevronDown, Menu as MenuIcon } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Badge } from '@/components/ui/badge';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 
@@ -73,20 +71,6 @@ export function Header({ title, subtitle, userEmail, unreadAlerts = 0, onMenuCli
         )}
 
         <div className="flex items-center gap-2 md:gap-4">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="relative hover:bg-[#F5F5F4] rounded-xl"
-            onClick={() => router.push('/alerts')}
-          >
-            <Bell className="w-5 h-5 text-[#6B7280]" />
-            {unreadAlerts > 0 && (
-              <Badge className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center p-0 bg-red-500 text-white text-xs">
-                {unreadAlerts}
-              </Badge>
-            )}
-          </Button>
-
           <DropdownMenu>
             <DropdownMenuTrigger className="flex items-center gap-2 hover:bg-[#F5F5F4] rounded-xl px-3 py-2 transition-colors">
               <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#7C3AED] to-[#EC4899] flex items-center justify-center">
