@@ -14,7 +14,10 @@ const BRAND_KEYWORDS = [
   'bugaboo', 'cybex', 'thule', 'britax', 'stokke', 'joolz',
   'nuna', 'uppababy', 'emmaljunga', 'maxi-cosi', 'joie', 'babyzen',
   'besafe', 'axkid', 'recaro', 'hauck', 'chicco', 'elodie',
-  'silver-cross', 'peg-perego',
+  'silver-cross', 'peg-perego', 'crescent', 'beemoo', 'kinderkraft',
+  'lionelo', 'doona', 'baby-jogger', 'bebeconfort', 'mutsy',
+  'inglesina', 'cam', 'kunert', 'anex', 'mima', 'icandy',
+  'silvercross', 'silvercross', 'odder',
 ];
 
 const PRODUCT_KEYWORDS = [...STROLLER_KEYWORDS, ...CAR_SEAT_KEYWORDS, ...BRAND_KEYWORDS];
@@ -73,6 +76,8 @@ const EXCLUDED_PATH_KEYWORDS = [
   '/guider/', '/bast-i-test/', '/trends/',
   '/space-race/', '/information',
   'vanliga-fragor',
+  '/inspiration/', '/blogg/', '/tips-och-rad/',
+  '/recension/', '/qa-med-',
 ];
 
 // Jollyroom product categories (path segment 1)
@@ -105,42 +110,69 @@ function isProductUrl(url: string, ownStore = false): boolean {
   const path = parsed.pathname.toLowerCase();
   const segments = path.split('/').filter(Boolean);
 
-  // Exclude category/listing pages
-  if (path.endsWith('/') || path.includes('index.html')) return false;
-  if (path === '/' || segments.length === 0) return false;
+  // Basic exclusions
+  if (path.endsWith('/') || path === '/' || segments.length === 0) return false;
 
   // Exclude known non-product path patterns
   if (EXCLUDED_PATH_KEYWORDS.some(kw => path.includes(kw))) return false;
 
-  // Exclude accessories/spare parts by filename
   const filename = segments[segments.length - 1] || '';
+
+  // ──────────────────────────────────────────────────────
+  // OWN STORES: Accept any URL containing a relevant brand
+  // or product keyword. The parser will skip non-product pages.
+  // ──────────────────────────────────────────────────────
+  if (ownStore) {
+    if (path.includes('index.html')) return false;
+
+    // Exclude accessories by filename
+    if (ACCESSORY_KEYWORDS.some(kw => filename.includes(kw))) return false;
+
+    const hasBrand = BRAND_KEYWORDS.some(b => path.includes(b));
+    const hasProduct = [...STROLLER_KEYWORDS, ...CAR_SEAT_KEYWORDS].some(kw => path.includes(kw));
+
+    // KöpBarnvagn: /sv/artiklar/[product].html — accept if contains brand or product keyword
+    if (path.includes('/artiklar/') && path.endsWith('.html')) {
+      return hasBrand || hasProduct;
+    }
+
+    // Flat URL stores (Bonti): /[product-slug] — single segment = product page
+    if (segments.length === 1 && filename.length > 10 && filename.includes('-')) {
+      return hasBrand || hasProduct;
+    }
+
+    // Multi-segment with .html ending (My Baby etc.)
+    if (segments.length >= 2 && path.endsWith('.html')) {
+      const lastSeg = segments[segments.length - 1];
+      if (lastSeg.length > 15 && (hasBrand || hasProduct)) return true;
+    }
+
+    return false;
+  }
+
+  // ──────────────────────────────────────────────────────
+  // COMPETITORS: More strict — require keyword/brand match
+  // ──────────────────────────────────────────────────────
+
+  // Exclude accessories
   if (ACCESSORY_KEYWORDS.some(kw => filename.includes(kw))) return false;
 
-  // --- Store-specific patterns ---
-
-  // KöpBarnvagn: /sv/artiklar/[product-name].html
-  // Own stores: accept any stroller/car seat product (no brand requirement, but must be relevant category)
+  // KöpBarnvagn-style: /artiklar/[product].html
   if (path.includes('/artiklar/') && path.endsWith('.html')) {
-    const hasProduct = STROLLER_KEYWORDS.some(kw => filename.includes(kw)) ||
-      CAR_SEAT_KEYWORDS.some(kw => filename.includes(kw));
-    if (ownStore) return hasProduct || BRAND_KEYWORDS.some(b => filename.includes(b));
-    const hasBrand = BRAND_KEYWORDS.some(b => filename.includes(b));
-    return hasBrand || hasProduct;
+    return BRAND_KEYWORDS.some(b => filename.includes(b)) ||
+      [...STROLLER_KEYWORDS, ...CAR_SEAT_KEYWORDS].some(kw => filename.includes(kw));
   }
 
   // My Baby: /barnvagnar/[product].html or /bilstolar/[product].html
   if (path.endsWith('.html') && segments.length >= 2) {
     const category = segments[0];
-    if (category === 'barnvagnar' || category === 'bilstolar' || category === 'babyskydd') {
-      if (ownStore) return true;
-      const hasBrand = BRAND_KEYWORDS.some(b => filename.includes(b));
-      const hasProduct = [...STROLLER_KEYWORDS, ...CAR_SEAT_KEYWORDS].some(kw => filename.includes(kw));
-      return hasBrand || hasProduct;
+    if (['barnvagnar', 'bilstolar', 'babyskydd'].includes(category)) {
+      return BRAND_KEYWORDS.some(b => filename.includes(b)) ||
+        [...STROLLER_KEYWORDS, ...CAR_SEAT_KEYWORDS].some(kw => filename.includes(kw));
     }
   }
 
-  // Jollyroom: /barnvagnar/[subcategory]/[product-slug] or /bilbarnstolar/[subcategory]/[product-slug]
-  // Last segment must look like a product (long, hyphenated) — not a sub-category
+  // Jollyroom: /barnvagnar/[subcategory]/[product-slug]
   if (segments.length >= 3) {
     const cat1 = segments[0];
     const cat2 = segments[1];
@@ -152,28 +184,19 @@ function isProductUrl(url: string, ownStore = false): boolean {
     }
   }
 
-  // Flat URL stores (Bonti, BabySam, Babyland): /[product-slug] with 1 segment
+  // Flat URL stores (BabySam, Babyland, BabyV, Pyret): /[product-slug]
   if (segments.length === 1) {
     const slug = segments[0].replace(/_/g, '-');
-    const hasProductKeyword = [...STROLLER_KEYWORDS, ...CAR_SEAT_KEYWORDS].some(kw => slug.includes(kw));
-    const hasBrand = BRAND_KEYWORDS.some(b => slug.includes(b));
-    // Own stores: accept product keyword OR brand (more lenient)
-    if (ownStore && slug.length > 10 && (hasProductKeyword || hasBrand)) return true;
-    if (hasProductKeyword && slug.length > 15) return true;
-    if (hasBrand && slug.length > 20 && !ACCESSORY_KEYWORDS.some(kw => slug.includes(kw))) return true;
+    if ([...STROLLER_KEYWORDS, ...CAR_SEAT_KEYWORDS].some(kw => slug.includes(kw)) && slug.length > 15) return true;
+    if (BRAND_KEYWORDS.some(b => slug.includes(b)) && slug.length > 20) return true;
     return false;
   }
 
-  // Generic: URL path contains an actual stroller/car-seat keyword (not just brand)
-  // and has enough depth to be a product page
+  // Generic: product keyword + long slug
   if (segments.length >= 2) {
-    const hasProductKeyword = [...STROLLER_KEYWORDS, ...CAR_SEAT_KEYWORDS].some(kw => path.includes(kw));
-    const hasBrand = BRAND_KEYWORDS.some(b => path.includes(b));
     const lastSegment = segments[segments.length - 1];
     const looksLikeProduct = lastSegment.length > 20 && lastSegment.includes('-');
-    // Own stores: accept product keyword OR brand with product-looking URL
-    if (ownStore && looksLikeProduct && (hasProductKeyword || hasBrand)) return true;
-    if (hasProductKeyword && looksLikeProduct) return true;
+    if (looksLikeProduct && [...STROLLER_KEYWORDS, ...CAR_SEAT_KEYWORDS].some(kw => path.includes(kw))) return true;
   }
 
   return false;
