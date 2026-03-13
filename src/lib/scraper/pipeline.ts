@@ -21,9 +21,12 @@ interface ScrapeResult {
   newPrices: number;
   alerts: number;
   errors: string[];
+  totalUrls: number;
+  urlsProcessed: number;
+  hasMore: boolean;
 }
 
-export async function scrapeCompetitor(competitorId: string, timeBudgetMs?: number): Promise<ScrapeResult> {
+export async function scrapeCompetitor(competitorId: string, timeBudgetMs?: number, offset?: number): Promise<ScrapeResult> {
   const supabase = getServiceClient();
 
   // Get competitor info
@@ -42,6 +45,9 @@ export async function scrapeCompetitor(competitorId: string, timeBudgetMs?: numb
     newPrices: 0,
     alerts: 0,
     errors: [],
+    totalUrls: 0,
+    urlsProcessed: 0,
+    hasMore: false,
   };
 
   // Log start
@@ -114,16 +120,20 @@ export async function scrapeCompetitor(competitorId: string, timeBudgetMs?: numb
       return aHas - bHas;
     });
 
-    // Step 2: Scrape each URL (higher limit for own stores)
+    // Step 2: Scrape each URL
     // Hard time limit: stop before Vercel timeout to allow log update
     const MAX_SCRAPE_MS = timeBudgetMs ? timeBudgetMs - 10_000 : 250_000;
-    const scrapeLimit = competitor.is_own_store ? 300 : 150;
-    for (const url of urls.slice(0, scrapeLimit)) {
+    const startOffset = offset || 0;
+    const urlSlice = urls.slice(startOffset);
+    result.totalUrls = urls.length;
+
+    let processed = 0;
+    for (const url of urlSlice) {
       // Safety: stop if approaching timeout
       if (Date.now() - startTime > MAX_SCRAPE_MS) {
-        result.errors.push(`Tidsgräns nådd efter ${result.productsScraped} produkter`);
         break;
       }
+      processed++;
       try {
         const html = await renderPage(url);
         const parsed = parseProductPage(html, url);
@@ -139,10 +149,12 @@ export async function scrapeCompetitor(competitorId: string, timeBudgetMs?: numb
       }
     }
 
-    const timedOut = result.errors.some(e => e.includes('Tidsgräns'));
+    result.urlsProcessed = startOffset + processed;
+    result.hasMore = result.urlsProcessed < urls.length;
+
     await updateLog(
-      supabase, log?.id, timedOut ? 'SUCCESS' : 'SUCCESS',
-      `Scrapade ${result.productsScraped} produkter (${urls.length} URLer hittade), ${result.newPrices} nya priser${timedOut ? ' (avbröts pga tidsgräns)' : ''}`,
+      supabase, log?.id, 'SUCCESS',
+      `Scrapade ${result.productsScraped} produkter (${result.urlsProcessed}/${urls.length} URLer), ${result.newPrices} nya priser${result.hasMore ? ' (fortsätter…)' : ''}`,
       result.productsScraped, Date.now() - startTime
     );
   } catch (err) {

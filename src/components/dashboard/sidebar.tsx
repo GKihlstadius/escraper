@@ -55,21 +55,38 @@ export function Sidebar({ userEmail, isOpen, collapsed, onClose, onToggleCollaps
 
       for (let i = 0; i < (competitors || []).length; i++) {
         const comp = competitors![i];
-        setScrapeStatus(comp.name);
-        setScrapeProgress({ current: i + 1, total });
-        try {
-          const res = await fetch('/api/scrape', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ competitorId: comp.id }),
-          });
-          const data = await res.json().catch(() => null);
-          if (data?.productsScraped !== undefined) {
-            setScrapeStatus(`${comp.name} ✓ ${data.productsScraped} produkter`);
+        let offset = 0;
+        let totalScraped = 0;
+        let pass = 1;
+
+        // Loop until all URLs are processed for this competitor
+        while (true) {
+          setScrapeStatus(`${comp.name}${pass > 1 ? ` (omgång ${pass})` : ''}`);
+          setScrapeProgress({ current: i + 1, total });
+          try {
+            const res = await fetch('/api/scrape', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ competitorId: comp.id, offset }),
+            });
+            const data = await res.json().catch(() => null);
+            if (data?.productsScraped !== undefined) {
+              totalScraped += data.productsScraped;
+              const urlInfo = data.totalUrls ? ` (${data.urlsProcessed}/${data.totalUrls} URLer)` : '';
+              setScrapeStatus(`${comp.name} ✓ ${totalScraped} produkter${urlInfo}`);
+            }
+
+            // Continue if there are more URLs to process
+            if (data?.hasMore && data?.urlsProcessed) {
+              offset = data.urlsProcessed;
+              pass++;
+              continue;
+            }
+          } catch (err) {
+            setScrapeStatus(`${comp.name} — fel`);
+            console.error(`Scrape failed for ${comp.name}:`, err);
           }
-        } catch (err) {
-          setScrapeStatus(`${comp.name} — fel`);
-          console.error(`Scrape failed for ${comp.name}:`, err);
+          break;
         }
       }
 
@@ -164,7 +181,7 @@ export function Sidebar({ userEmail, isOpen, collapsed, onClose, onToggleCollaps
                     style={{ width: `${(scrapeProgress.current / scrapeProgress.total) * 100}%` }}
                   />
                 </div>
-                <p className="text-[10px] text-[#6B7280]">{scrapeProgress.current} av {scrapeProgress.total} butiker</p>
+                <p className="text-[10px] text-[#6B7280]">Butik {scrapeProgress.current} av {scrapeProgress.total}</p>
               </>
             )}
           </div>

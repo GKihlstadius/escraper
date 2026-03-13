@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { competitorId, generateRecs } = body;
+  const { competitorId, generateRecs, offset } = body;
 
   // Generate recommendations only
   if (generateRecs) {
@@ -22,8 +22,8 @@ export async function POST(request: NextRequest) {
   }
 
   if (competitorId) {
-    // Scrape single competitor
-    const result = await scrapeCompetitor(competitorId);
+    // Scrape single competitor (with optional offset for pagination)
+    const result = await scrapeCompetitor(competitorId, undefined, offset || 0);
     return NextResponse.json(result);
   }
 
