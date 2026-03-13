@@ -82,7 +82,7 @@ export async function scrapeCompetitor(competitorId: string, timeBudgetMs?: numb
         '/bilstolar/babyskydd', '/bilbarnstolar/babyskydd',
         '/bilbarnstolar/bakatvanda-bilbarnstolar', '/bilbarnstolar/framatvanda-bilbarnstolar',
         '/bilbarnstolar/balteskuddar',
-        // Brand pages (Bonti uses /barnvagnar/varumarken/[brand])
+        // Bonti brand pages
         '/barnvagnar/varumarken/bugaboo', '/barnvagnar/varumarken/cybex',
         '/barnvagnar/varumarken/britax', '/barnvagnar/varumarken/joolz',
         '/barnvagnar/varumarken/stokke', '/barnvagnar/varumarken/nuna',
@@ -96,6 +96,15 @@ export async function scrapeCompetitor(competitorId: string, timeBudgetMs?: numb
         '/bilbarnstolar/varumarken/cybex', '/bilbarnstolar/varumarken/maxi-cosi',
         '/bilbarnstolar/varumarken/britax', '/bilbarnstolar/varumarken/joie',
         '/bilbarnstolar/varumarken/nuna', '/bilbarnstolar/varumarken/recaro',
+        // Jollyroom category pages
+        '/barnvagnar/duovagnar-kombivagnar', '/barnvagnar/duovagnar-kombivagnar/duovagnar',
+        '/barnvagnar/duovagnar-kombivagnar/kombivagnar',
+        '/barnvagnar/sittvagnar', '/barnvagnar/sittvagnar/sulkyvagnar',
+        '/barnvagnar/syskonvagnar', '/barnvagnar/liggvagnar',
+        '/bilbarnstolar/babyskydd', '/bilbarnstolar/bakatvanda-bilbarnstolar',
+        '/bilbarnstolar/framatvanda-bilbarnstolar', '/bilbarnstolar/balteskuddar',
+        // My Baby category pages
+        '/barnvagnar', '/bilstolar', '/babyskydd',
       ];
       urls = await discoverFromCategoryPages(competitor.url.replace(/\/$/, ''), categoryPaths, urlLimit, isOwn);
     }

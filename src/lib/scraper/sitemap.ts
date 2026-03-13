@@ -139,12 +139,17 @@ function isProductUrl(url: string, ownStore = false): boolean {
     }
   }
 
-  // Jollyroom: /barnvagnar/[subcategory]/[product] or /bilbarnstolar/[subcategory]/[product]
+  // Jollyroom: /barnvagnar/[subcategory]/[product-slug] or /bilbarnstolar/[subcategory]/[product-slug]
+  // Last segment must look like a product (long, hyphenated) — not a sub-category
   if (segments.length >= 3) {
     const cat1 = segments[0];
     const cat2 = segments[1];
-    if (cat1 === 'barnvagnar' && JOLLYROOM_PRODUCT_CATEGORIES.some(c => cat2 === c)) return true;
-    if (cat1 === 'bilbarnstolar' && JOLLYROOM_PRODUCT_CATEGORIES.some(c => cat2 === c)) return true;
+    const lastSeg = segments[segments.length - 1];
+    const looksLikeProduct = lastSeg.length > 15 && lastSeg.includes('-') && !JOLLYROOM_PRODUCT_CATEGORIES.includes(lastSeg);
+    if (looksLikeProduct) {
+      if (cat1 === 'barnvagnar' && JOLLYROOM_PRODUCT_CATEGORIES.some(c => cat2 === c)) return true;
+      if (cat1 === 'bilbarnstolar' && JOLLYROOM_PRODUCT_CATEGORIES.some(c => cat2 === c)) return true;
+    }
   }
 
   // Flat URL stores (Bonti, BabySam, Babyland): /[product-slug] with 1 segment
