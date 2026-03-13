@@ -100,7 +100,7 @@ function isSitemapUrl(url: string): boolean {
     lower.includes('urlset');
 }
 
-function isProductUrl(url: string): boolean {
+function isProductUrl(url: string, ownStore = false): boolean {
   const parsed = new URL(url);
   const path = parsed.pathname.toLowerCase();
   const segments = path.split('/').filter(Boolean);
@@ -119,8 +119,9 @@ function isProductUrl(url: string): boolean {
   // --- Store-specific patterns ---
 
   // KöpBarnvagn: /sv/artiklar/[product-name].html
+  // For own stores: accept ALL product pages under /artiklar/ (no keyword requirement)
   if (path.includes('/artiklar/') && path.endsWith('.html')) {
-    // Must have a brand or product keyword in the filename
+    if (ownStore) return true;
     const hasBrand = BRAND_KEYWORDS.some(b => filename.includes(b));
     const hasProduct = STROLLER_KEYWORDS.some(kw => filename.includes(kw)) ||
       CAR_SEAT_KEYWORDS.some(kw => filename.includes(kw));
@@ -131,7 +132,7 @@ function isProductUrl(url: string): boolean {
   if (path.endsWith('.html') && segments.length >= 2) {
     const category = segments[0];
     if (category === 'barnvagnar' || category === 'bilstolar' || category === 'babyskydd') {
-      // Must have a brand or product keyword in filename
+      if (ownStore) return true;
       const hasBrand = BRAND_KEYWORDS.some(b => filename.includes(b));
       const hasProduct = [...STROLLER_KEYWORDS, ...CAR_SEAT_KEYWORDS].some(kw => filename.includes(kw));
       return hasBrand || hasProduct;
@@ -139,7 +140,6 @@ function isProductUrl(url: string): boolean {
   }
 
   // Jollyroom: /barnvagnar/[subcategory]/[product] or /bilbarnstolar/[subcategory]/[product]
-  // Requires 3+ path segments to distinguish products from category listings
   if (segments.length >= 3) {
     const cat1 = segments[0];
     const cat2 = segments[1];
@@ -150,9 +150,10 @@ function isProductUrl(url: string): boolean {
   // Flat URL stores (Bonti, BabySam, Babyland): /[product-slug] with 1 segment
   if (segments.length === 1) {
     const slug = segments[0].replace(/_/g, '-');
+    // Own stores: accept any slug that looks like a product (long enough, has hyphens)
+    if (ownStore && slug.length > 10 && slug.includes('-')) return true;
     const hasProductKeyword = [...STROLLER_KEYWORDS, ...CAR_SEAT_KEYWORDS].some(kw => slug.includes(kw));
     const hasBrand = BRAND_KEYWORDS.some(b => slug.includes(b));
-    // Accept if: has product keyword OR has brand and slug is long enough to be a product page
     if (hasProductKeyword && slug.length > 15) return true;
     if (hasBrand && slug.length > 20 && !ACCESSORY_KEYWORDS.some(kw => slug.includes(kw))) return true;
     return false;
@@ -161,6 +162,11 @@ function isProductUrl(url: string): boolean {
   // Generic: URL path contains an actual stroller/car-seat keyword (not just brand)
   // and has enough depth to be a product page
   if (segments.length >= 2) {
+    // Own stores: accept any deep link that looks like a product page
+    if (ownStore) {
+      const lastSegment = segments[segments.length - 1];
+      if (lastSegment.length > 10 && lastSegment.includes('-')) return true;
+    }
     const hasProductKeyword = [...STROLLER_KEYWORDS, ...CAR_SEAT_KEYWORDS].some(kw => path.includes(kw));
     const lastSegment = segments[segments.length - 1];
     const looksLikeProduct = lastSegment.length > 20 && lastSegment.includes('-');
@@ -181,7 +187,8 @@ async function fetchSitemap(url: string): Promise<string> {
 
 export async function discoverProductUrls(
   sitemapUrl: string,
-  maxUrls: number = 250
+  maxUrls: number = 250,
+  ownStore: boolean = false
 ): Promise<string[]> {
   const queue: string[] = [sitemapUrl];
   const visited = new Set<string>();
@@ -207,7 +214,7 @@ export async function discoverProductUrls(
           if (!visited.has(loc)) {
             queue.push(loc);
           }
-        } else if (isProductUrl(loc)) {
+        } else if (isProductUrl(loc, ownStore)) {
           productUrls.add(loc);
         }
       }
@@ -224,7 +231,8 @@ export async function discoverProductUrls(
 export async function discoverFromCategoryPages(
   baseUrl: string,
   categoryPaths: string[],
-  maxUrls: number = 100
+  maxUrls: number = 100,
+  ownStore: boolean = false
 ): Promise<string[]> {
   const productUrls = new Set<string>();
 
@@ -256,21 +264,24 @@ export async function discoverFromCategoryPages(
           if (!href.startsWith('/') && !href.startsWith('http')) return false;
           const fullUrl = href.startsWith('/') ? `${baseUrl}${href}` : href;
           try {
-            // For category page discovery, be more lenient — accept any deep link
-            // under a known product category that looks like a product page
             const parsed = new URL(fullUrl);
             const path = parsed.pathname.toLowerCase();
             const segs = path.split('/').filter(Boolean);
-            if (segs.length < 2) return false;
+            if (segs.length < 1) return false;
             if (path.endsWith('/') || path.includes('index')) return false;
             if (EXCLUDED_PATH_KEYWORDS.some(kw => path.includes(kw))) return false;
             if (ACCESSORY_KEYWORDS.some(kw => path.includes(kw))) return false;
 
-            // Must be under a relevant category
+            // Own stores: accept any link that looks like a product page
+            if (ownStore) {
+              const last = segs[segs.length - 1];
+              return last.length > 10 && last.includes('-');
+            }
+
+            // Competitors: must be under a relevant category
+            if (segs.length < 2) return false;
             const cat = segs[0];
             if (!['barnvagnar', 'bilbarnstolar', 'bilstolar', 'babyskydd'].includes(cat)) return false;
-
-            // Last segment should look like a product (long, has hyphens)
             const last = segs[segs.length - 1];
             return last.length > 15 && last.includes('-');
           } catch {

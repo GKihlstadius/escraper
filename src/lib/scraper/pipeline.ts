@@ -59,9 +59,11 @@ export async function scrapeCompetitor(competitorId: string): Promise<ScrapeResu
 
   try {
     // Step 1: Discover product URLs
+    const isOwn = competitor.is_own_store;
+    const urlLimit = isOwn ? 1500 : 500;
     let urls: string[] = [];
     if (competitor.sitemap_url) {
-      urls = await discoverProductUrls(competitor.sitemap_url, 500);
+      urls = await discoverProductUrls(competitor.sitemap_url, urlLimit, isOwn);
     }
 
     // Fallback: scrape category pages for stores with no product URLs in sitemap
@@ -70,7 +72,7 @@ export async function scrapeCompetitor(competitorId: string): Promise<ScrapeResu
         '/barnvagnar', '/bilstolar', '/bilbarnstolar', '/babyskydd',
         '/barnvagnar/duovagnar', '/barnvagnar/sittvagnar', '/barnvagnar/sulky',
         '/barnvagnar/syskonvagnar', '/barnvagnar/liggvagnar',
-        '/barnvagnar/barnvagnspaket',
+        '/barnvagnar/barnvagnspaket', '/barnvagnar/joggingvagnar',
         '/bilstolar/babyskydd', '/bilbarnstolar/babyskydd',
         '/bilbarnstolar/bakatvanda-bilbarnstolar', '/bilbarnstolar/framatvanda-bilbarnstolar',
         '/bilbarnstolar/balteskuddar',
@@ -80,8 +82,16 @@ export async function scrapeCompetitor(competitorId: string): Promise<ScrapeResu
         '/barnvagnar/varumarken/stokke', '/barnvagnar/varumarken/nuna',
         '/barnvagnar/varumarken/thule', '/barnvagnar/varumarken/emmaljunga',
         '/barnvagnar/varumarken/uppababy', '/barnvagnar/varumarken/maxi-cosi',
+        '/barnvagnar/varumarken/joie', '/barnvagnar/varumarken/babyzen',
+        '/barnvagnar/varumarken/silver-cross', '/barnvagnar/varumarken/peg-perego',
+        '/barnvagnar/varumarken/hauck', '/barnvagnar/varumarken/chicco',
+        '/barnvagnar/varumarken/elodie',
+        '/bilbarnstolar/varumarken/besafe', '/bilbarnstolar/varumarken/axkid',
+        '/bilbarnstolar/varumarken/cybex', '/bilbarnstolar/varumarken/maxi-cosi',
+        '/bilbarnstolar/varumarken/britax', '/bilbarnstolar/varumarken/joie',
+        '/bilbarnstolar/varumarken/nuna', '/bilbarnstolar/varumarken/recaro',
       ];
-      urls = await discoverFromCategoryPages(competitor.url.replace(/\/$/, ''), categoryPaths, 500);
+      urls = await discoverFromCategoryPages(competitor.url.replace(/\/$/, ''), categoryPaths, urlLimit, isOwn);
     }
 
     if (urls.length === 0) {
@@ -104,8 +114,8 @@ export async function scrapeCompetitor(competitorId: string): Promise<ScrapeResu
       return aHas - bHas;
     });
 
-    // Step 2: Scrape each URL (higher limit for own stores)
-    const scrapeLimit = competitor.is_own_store ? 300 : 150;
+    // Step 2: Scrape each URL (much higher limit for own stores to get ALL products)
+    const scrapeLimit = competitor.is_own_store ? 1000 : 150;
     for (const url of urls.slice(0, scrapeLimit)) {
       try {
         const html = await renderPage(url);
