@@ -30,6 +30,8 @@ export function Sidebar({ userEmail, isOpen, collapsed, onClose, onToggleCollaps
   const pathname = usePathname();
   const router = useRouter();
   const [scraping, setScraping] = useState(false);
+  const [scrapeStatus, setScrapeStatus] = useState('');
+  const [scrapeProgress, setScrapeProgress] = useState({ current: 0, total: 0 });
 
   async function handleLogout() {
     const supabase = createClient();
@@ -40,37 +42,49 @@ export function Sidebar({ userEmail, isOpen, collapsed, onClose, onToggleCollaps
 
   async function handleScrape() {
     setScraping(true);
+    setScrapeStatus('Hämtar butiker...');
     try {
-      // Get all active competitors
       const supabase = createClient();
       const { data: competitors } = await supabase
         .from('competitors')
         .select('id, name')
         .eq('is_active', true);
 
-      // Scrape each competitor one by one to avoid Vercel timeout
-      for (const comp of competitors || []) {
+      const total = (competitors || []).length;
+      setScrapeProgress({ current: 0, total });
+
+      for (let i = 0; i < (competitors || []).length; i++) {
+        const comp = competitors![i];
+        setScrapeStatus(comp.name);
+        setScrapeProgress({ current: i + 1, total });
         try {
-          await fetch('/api/scrape', {
+          const res = await fetch('/api/scrape', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ competitorId: comp.id }),
           });
+          const data = await res.json().catch(() => null);
+          if (data?.productsScraped !== undefined) {
+            setScrapeStatus(`${comp.name} ✓ ${data.productsScraped} produkter`);
+          }
         } catch (err) {
+          setScrapeStatus(`${comp.name} — fel`);
           console.error(`Scrape failed for ${comp.name}:`, err);
         }
       }
 
-      // Generate recommendations after all scrapes
+      setScrapeStatus('Genererar rekommendationer...');
       await fetch('/api/scrape', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ generateRecs: true }),
       }).catch(() => {});
 
+      setScrapeStatus('Klar! Laddar om...');
       window.location.reload();
     } catch (err) {
       console.error('Scrape failed:', err);
+      setScrapeStatus('Fel vid scraping');
       setScraping(false);
     }
   }
@@ -135,6 +149,27 @@ export function Sidebar({ userEmail, isOpen, collapsed, onClose, onToggleCollaps
           })}
         </nav>
 
+        {/* Scrape status */}
+        {scraping && !collapsed && (
+          <div className="flex-shrink-0 border-t border-[#E5E7EB] px-4 py-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <RefreshCw className="h-3.5 w-3.5 text-[#7C3AED] animate-spin flex-shrink-0" />
+              <span className="text-xs font-medium text-[#7C3AED] truncate">{scrapeStatus}</span>
+            </div>
+            {scrapeProgress.total > 0 && (
+              <>
+                <div className="flex h-1.5 rounded-full overflow-hidden bg-[#F5F5F4]">
+                  <div
+                    className="bg-[#7C3AED] rounded-full transition-all duration-500"
+                    style={{ width: `${(scrapeProgress.current / scrapeProgress.total) * 100}%` }}
+                  />
+                </div>
+                <p className="text-[10px] text-[#6B7280]">{scrapeProgress.current} av {scrapeProgress.total} butiker</p>
+              </>
+            )}
+          </div>
+        )}
+
         {/* Bottom */}
         <div className={cn("flex-shrink-0 border-t border-[#E5E7EB] space-y-3", collapsed ? "p-2" : "p-4")}>
           {collapsed ? (
@@ -142,8 +177,11 @@ export function Sidebar({ userEmail, isOpen, collapsed, onClose, onToggleCollaps
               <button
                 onClick={handleScrape}
                 disabled={scraping}
-                title="Scrapa nu"
-                className="w-full flex items-center justify-center p-3 rounded-xl border border-[#7C3AED]/30 text-[#7C3AED] hover:bg-[#7C3AED]/5 transition-colors disabled:opacity-50"
+                title={scraping ? scrapeStatus : "Scrapa nu"}
+                className={cn(
+                  "w-full flex items-center justify-center p-3 rounded-xl border transition-colors disabled:opacity-50",
+                  scraping ? "border-[#7C3AED] bg-[#7C3AED]/5 text-[#7C3AED]" : "border-[#7C3AED]/30 text-[#7C3AED] hover:bg-[#7C3AED]/5"
+                )}
               >
                 <RefreshCw className={cn("h-4 w-4", scraping && "animate-spin")} />
               </button>
