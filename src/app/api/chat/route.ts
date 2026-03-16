@@ -180,11 +180,16 @@ function buildContext(
       const prices = v.prices || [];
       if (prices.length < 2) continue;
 
-      // Get latest price per competitor
+      // Filter out stale prices (older than 14 days)
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - 14);
+
+      // Get latest price per competitor (only recent data)
       const latestByStore = new Map<string, { price: number; store: string; isOwn: boolean; scrapedAt: string }>();
       for (const pr of prices) {
         const comp = pr.competitor;
         if (!comp) continue;
+        if (new Date(pr.scraped_at) < cutoff) continue; // skip stale prices
         const key = comp.name;
         const existing = latestByStore.get(key);
         if (!existing || new Date(pr.scraped_at) > new Date(existing.scrapedAt)) {
@@ -273,8 +278,15 @@ function buildContext(
     }
   }
 
-  // ── Price history (detect trends) ──
-  const priceChanges: Array<{ product: string; store: string; oldPrice: number; newPrice: number; change: number }> = [];
+  // ── Price history (detect trends over 30 days) ──
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+  const priceChanges: Array<{ product: string; store: string; oldPrice: number; newPrice: number; change: number; date: string }> = [];
+  const storeTrends = new Map<string, { drops: number; raises: number; brands: Set<string> }>();
+
   for (const p of products) {
     for (const v of (p.variants || [])) {
       const prices = v.prices || [];
@@ -283,32 +295,65 @@ function buildContext(
       for (const pr of prices) {
         const comp = pr.competitor;
         if (!comp) continue;
+        if (new Date(pr.scraped_at) < thirtyDaysAgo) continue;
         if (!byStore.has(comp.name)) byStore.set(comp.name, []);
         byStore.get(comp.name)!.push({ price: pr.price, date: pr.scraped_at });
       }
       for (const [store, history] of byStore) {
         if (history.length < 2) continue;
         history.sort((a, b) => a.date.localeCompare(b.date));
-        const prev = history[history.length - 2];
-        const curr = history[history.length - 1];
-        if (prev.price !== curr.price) {
-          priceChanges.push({
-            product: `${p.brand} ${p.name}`,
-            store,
-            oldPrice: prev.price,
-            newPrice: curr.price,
-            change: curr.price - prev.price,
-          });
+        // Detect all price changes (not just last 2)
+        for (let i = 1; i < history.length; i++) {
+          if (history[i].price !== history[i - 1].price) {
+            const change = history[i].price - history[i - 1].price;
+            priceChanges.push({
+              product: `${p.brand} ${p.name}`,
+              store,
+              oldPrice: history[i - 1].price,
+              newPrice: history[i].price,
+              change,
+              date: history[i].date,
+            });
+            // Track store trends
+            if (!storeTrends.has(store)) storeTrends.set(store, { drops: 0, raises: 0, brands: new Set() });
+            const trend = storeTrends.get(store)!;
+            if (change < 0) trend.drops++;
+            else trend.raises++;
+            trend.brands.add(p.brand || 'Okänt');
+          }
         }
       }
     }
   }
-  if (priceChanges.length > 0) {
-    priceChanges.sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
-    ctx += `\n## Senaste prisändringar (${priceChanges.length} st)\n`;
-    for (const pc of priceChanges.slice(0, 20)) {
+
+  // Store trend summary
+  if (storeTrends.size > 0) {
+    ctx += `\n## Pristrender (senaste 30 dagarna)\n`;
+    for (const [store, trend] of storeTrends) {
+      if (trend.drops + trend.raises >= 3) {
+        const brands = [...trend.brands].slice(0, 3).join(', ');
+        if (trend.drops > trend.raises * 2) {
+          ctx += `- ${store}: ${trend.drops} prissänkningar (${brands}) → trolig kampanj\n`;
+        } else if (trend.raises > trend.drops * 2) {
+          ctx += `- ${store}: ${trend.raises} prishöjningar (${brands}) → möjligen nya inköpspriser\n`;
+        } else {
+          ctx += `- ${store}: ${trend.drops} sänkningar, ${trend.raises} höjningar (${brands})\n`;
+        }
+      }
+    }
+  }
+
+  // Recent price changes (last 7 days only, sorted by magnitude)
+  const recentChanges = priceChanges
+    .filter(pc => new Date(pc.date) > sevenDaysAgo)
+    .sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
+
+  if (recentChanges.length > 0) {
+    ctx += `\n## Senaste prisändringar - 7 dagar (${recentChanges.length} st)\n`;
+    for (const pc of recentChanges.slice(0, 20)) {
       const dir = pc.change > 0 ? '↑' : '↓';
-      ctx += `- ${pc.product} hos ${pc.store}: ${Math.round(pc.oldPrice)} → ${Math.round(pc.newPrice)} kr (${dir}${Math.abs(Math.round(pc.change))} kr)\n`;
+      const date = new Date(pc.date).toLocaleDateString('sv-SE');
+      ctx += `- ${pc.product} hos ${pc.store}: ${Math.round(pc.oldPrice)} → ${Math.round(pc.newPrice)} kr (${dir}${Math.abs(Math.round(pc.change))} kr) [${date}]\n`;
     }
   }
 

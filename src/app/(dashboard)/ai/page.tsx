@@ -36,9 +36,15 @@ export default function AIChatPage() {
   const [loadingConversations, setLoadingConversations] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Load conversations on mount
+  // Load conversations after auth session is ready
   useEffect(() => {
+    // Wait for auth to be established before loading conversations
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) loadConversations();
+    });
+    // Also try immediately (session may already exist)
     loadConversations();
+    return () => subscription.unsubscribe();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {

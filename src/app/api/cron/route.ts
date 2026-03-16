@@ -1,19 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { scrapeCompetitor, generateRecommendations } from '@/lib/scraper/pipeline';
 
-export const maxDuration = 300; // 5 min on Vercel Pro, 10s on Hobby
-
-// Wrap scrapeCompetitor with a hard timeout so one hanging store can't block others
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Timeout: ${label} exceeded ${ms}ms`)), ms);
-    promise.then(
-      (val) => { clearTimeout(timer); resolve(val); },
-      (err) => { clearTimeout(timer); reject(err); },
-    );
-  });
-}
+export const maxDuration = 60; // Dispatcher only needs ~10s, but allow headroom
 
 export async function GET(request: NextRequest) {
   // Verify cron secret
@@ -27,11 +15,10 @@ export async function GET(request: NextRequest) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 
-  // Get all active competitors with their scrape offset
-  // Process own stores first (most important), then competitors
+  // Get all active competitors
   const { data: competitors } = await supabase
     .from('competitors')
-    .select('id, name, scrape_offset, is_own_store')
+    .select('id, name, is_own_store')
     .eq('is_active', true)
     .order('is_own_store', { ascending: false });
 
@@ -39,46 +26,39 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: 'No active competitors' });
   }
 
-  // Give each competitor a proportional time budget (total 270s, keep 30s for recs + response)
-  const totalBudgetMs = 270_000;
-  const perCompetitorMs = Math.floor(totalBudgetMs / competitors.length);
+  // Fan out: trigger a separate serverless function per store
+  // Each gets its own 300s budget instead of sharing one
+  const baseUrl = request.nextUrl.origin;
+  const secret = process.env.CRON_SECRET;
 
-  const results = [];
-  for (const competitor of competitors) {
-    try {
-      const offset = competitor.scrape_offset || 0;
-      // Hard timeout per competitor — if it hangs, skip and continue with next
-      const result = await withTimeout(
-        scrapeCompetitor(competitor.id, perCompetitorMs, offset),
-        perCompetitorMs + 5_000, // 5s grace period
-        competitor.name,
+  const results = await Promise.allSettled(
+    competitors.map(async (c) => {
+      const res = await fetch(
+        `${baseUrl}/api/cron/scrape-store?id=${c.id}`,
+        {
+          headers: { Authorization: `Bearer ${secret}` },
+          signal: AbortSignal.timeout(295_000),
+        }
       );
-      results.push(result);
+      const data = await res.json();
+      return { competitorId: c.id, name: c.name, ...data };
+    })
+  );
 
-      // Save progress: rotate through non-priority URLs across runs
-      await supabase
-        .from('competitors')
-        .update({ scrape_offset: result.nextOffset })
-        .eq('id', competitor.id);
-    } catch (err) {
-      results.push({
-        competitorId: competitor.id,
-        competitorName: competitor.name,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
+  // Trigger recommendations after all scrapes complete
+  fetch(`${baseUrl}/api/cron/scrape-store?recs=1`, {
+    headers: { Authorization: `Bearer ${secret}` },
+  }).catch(() => {}); // fire-and-forget
 
-  // Generate recommendations after scraping
-  try {
-    await generateRecommendations();
-  } catch (err) {
-    console.error('Failed to generate recommendations:', err);
-  }
+  const summary = results.map((r) => {
+    if (r.status === 'fulfilled') return r.value;
+    return { error: r.reason?.message || 'Unknown error' };
+  });
 
   return NextResponse.json({
-    message: 'Scraping complete',
+    message: 'Scraping dispatched',
     timestamp: new Date().toISOString(),
-    results,
+    stores: competitors.length,
+    results: summary,
   });
 }
