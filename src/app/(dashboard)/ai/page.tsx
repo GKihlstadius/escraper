@@ -277,7 +277,7 @@ export default function AIChatPage() {
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">AI Assistent</h1>
-          <p className="text-muted-foreground">Fråga om priser, trender och konkurrenter</p>
+          <p className="text-muted-foreground text-sm">Fråga om priser, trender och konkurrenter</p>
         </div>
         <Button
           variant={showMemories ? 'default' : 'outline'}
