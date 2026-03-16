@@ -18,6 +18,49 @@ interface PriceDiff {
   scrapedAt: string;
 }
 
+// Detect if a product name vs competitor URL is a likely mismatch
+// e.g., product "Cybex PRIAM Skidor" matched to URL "cybex-priam-duovagn"
+function isLikelyMismatch(productName: string, url: string): boolean {
+  const name = productName.toLowerCase();
+  const urlPath = url.toLowerCase();
+
+  // Part/accessory keywords
+  const partKeywords = ['liggdel', 'sittdel', 'chassi', 'chassis', 'suflett', 'adapter',
+    'fotsack', 'regnskydd', 'skidor', 'varukorg', 'hjul', 'körkåpa', 'solskydd',
+    'insektsnät', 'åkpåse', 'mugghållare', 'cupholder', 'organiser', 'barsele',
+    'madrass', 'kudde', 'handtag', 'bumper', 'snack-tray'];
+  // Full product keywords
+  const fullProductKeywords = ['duovagn', 'sittvagn', 'kombivagn', 'barnvagn', 'syskonvagn'];
+  // Bundle keywords
+  const bundleKeywords = ['paket', 'komplett', 'set', 'bundle', 'inkl'];
+
+  const nameIsPart = partKeywords.some(k => name.includes(k));
+  const nameIsFullProduct = fullProductKeywords.some(k => name.includes(k));
+  const nameIsBundle = bundleKeywords.some(k => name.includes(k));
+
+  const urlHasPart = partKeywords.some(k => urlPath.includes(k));
+  const urlHasFullProduct = fullProductKeywords.some(k => urlPath.includes(k));
+  const urlHasBundle = bundleKeywords.some(k => urlPath.includes(k));
+
+  // Part matched to full product or bundle
+  if (nameIsPart && (urlHasFullProduct || urlHasBundle)) return true;
+  // Full product matched to part
+  if (nameIsFullProduct && urlHasPart) return true;
+  // Bundle matched to non-bundle, or vice versa
+  if (nameIsBundle && !urlHasBundle && urlHasFullProduct) return true;
+  // Sittvagn vs duovagn mismatch
+  if (name.includes('sittvagn') && urlPath.includes('duovagn')) return true;
+  if (name.includes('duovagn') && urlPath.includes('sittvagn') && !urlPath.includes('duovagn')) return true;
+  // Babyskydd matched to babyskydd+bas bundle
+  if (name.includes('babyskydd') && !name.includes('bas') && !name.includes('inkl') &&
+      urlPath.includes('babyskydd') && (urlPath.includes('-bas') || urlPath.includes('inkl'))) return true;
+  // Bilstol matched to bilstol+bas bundle
+  if (name.includes('bilbarnstol') && !name.includes('bas') && !name.includes('inkl') &&
+      urlPath.includes('inkl') && urlPath.includes('bas')) return true;
+
+  return false;
+}
+
 export default async function RecommendationsPage() {
   let supabase;
   try {
@@ -127,7 +170,10 @@ export default async function RecommendationsPage() {
       for (const own of ownPrices) {
         // Price sanity check
         const ratio = entry.price / own.price;
-        if (ratio > 5 || ratio < 0.1) continue;
+        if (ratio > 3 || ratio < 0.33) continue;
+
+        // Product type mismatch check — compare product name vs competitor URL
+        if (entry.url && isLikelyMismatch(product.name, entry.url)) continue;
 
         const diff = own.price - entry.price;
         if (Math.abs(diff) < 1) continue;
