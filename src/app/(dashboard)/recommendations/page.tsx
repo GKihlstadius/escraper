@@ -19,7 +19,6 @@ interface PriceDiff {
 }
 
 // Detect if a product name vs competitor URL is a likely mismatch
-// e.g., product "Cybex PRIAM Skidor" matched to URL "cybex-priam-duovagn"
 function isLikelyMismatch(productName: string, url: string): boolean {
   const name = productName.toLowerCase();
   const urlPath = url.toLowerCase();
@@ -28,35 +27,78 @@ function isLikelyMismatch(productName: string, url: string): boolean {
   const partKeywords = ['liggdel', 'sittdel', 'chassi', 'chassis', 'suflett', 'adapter',
     'fotsack', 'regnskydd', 'skidor', 'varukorg', 'hjul', 'körkåpa', 'solskydd',
     'insektsnät', 'åkpåse', 'mugghållare', 'cupholder', 'organiser', 'barsele',
-    'madrass', 'kudde', 'handtag', 'bumper', 'snack-tray'];
+    'madrass', 'kudde', 'handtag', 'bumper', 'snack-tray',
+    'carrycot', 'carry-cot', 'seat-unit', 'seat-pack'];
   // Full product keywords
   const fullProductKeywords = ['duovagn', 'sittvagn', 'kombivagn', 'barnvagn', 'syskonvagn'];
-  // Bundle keywords
-  const bundleKeywords = ['paket', 'komplett', 'set', 'bundle', 'inkl'];
+  // Bundle keywords (URL indicates a bundle/package)
+  const bundleUrlKeywords = ['paket', 'komplett', 'set', 'bundle', 'inkl',
+    'baby-safe', 'babysafe', 'babyskydd', 'cabriofix', 'cloud-t', 'cloud-g',
+    'isofixbas', 'isofix-bas', 'i-base', 'base-'];
 
   const nameIsPart = partKeywords.some(k => name.includes(k));
   const nameIsFullProduct = fullProductKeywords.some(k => name.includes(k));
-  const nameIsBundle = bundleKeywords.some(k => name.includes(k));
+  const nameIsBundle = ['paket', 'komplett', 'set', 'bundle', 'inkl'].some(k => name.includes(k));
+  const nameIsAccessoryBase = ['isofixbas', 'isofix bas', 'base '].some(k => name.includes(k));
 
   const urlHasPart = partKeywords.some(k => urlPath.includes(k));
   const urlHasFullProduct = fullProductKeywords.some(k => urlPath.includes(k));
-  const urlHasBundle = bundleKeywords.some(k => urlPath.includes(k));
+
+  // Check if URL suggests a bundle (product + babyskydd/base combo)
+  const urlHasMultiProduct = (
+    (urlPath.includes('duovagn') || urlPath.includes('sittvagn') || urlPath.includes('barnvagn')) &&
+    (urlPath.includes('babyskydd') || urlPath.includes('baby-safe') || urlPath.includes('babysafe') ||
+     urlPath.includes('cloud-t') || urlPath.includes('cloud-g') || urlPath.includes('cabriofix'))
+  );
 
   // Part matched to full product or bundle
-  if (nameIsPart && (urlHasFullProduct || urlHasBundle)) return true;
+  if (nameIsPart && (urlHasFullProduct || urlHasMultiProduct)) return true;
   // Full product matched to part
   if (nameIsFullProduct && urlHasPart) return true;
-  // Bundle matched to non-bundle, or vice versa
-  if (nameIsBundle && !urlHasBundle && urlHasFullProduct) return true;
+  // Single product matched to multi-product bundle URL
+  if (!nameIsBundle && urlHasMultiProduct) return true;
   // Sittvagn vs duovagn mismatch
   if (name.includes('sittvagn') && urlPath.includes('duovagn')) return true;
   if (name.includes('duovagn') && urlPath.includes('sittvagn') && !urlPath.includes('duovagn')) return true;
-  // Babyskydd matched to babyskydd+bas bundle
+  // Babyskydd (alone) matched to babyskydd+bas bundle URL
   if (name.includes('babyskydd') && !name.includes('bas') && !name.includes('inkl') &&
-      urlPath.includes('babyskydd') && (urlPath.includes('-bas') || urlPath.includes('inkl'))) return true;
+      (urlPath.includes('isofixbas') || urlPath.includes('isofix-bas') || urlPath.includes('-curv-'))) return true;
+  // Isofixbas product matched to babyskydd URL (or vice versa)
+  if (nameIsAccessoryBase && urlPath.includes('babyskydd') && !urlPath.includes('bas')) return true;
+  if (name.includes('babyskydd') && !name.includes('bas') &&
+      urlPath.includes('bas') && !urlPath.includes('babyskydd')) return true;
   // Bilstol matched to bilstol+bas bundle
   if (name.includes('bilbarnstol') && !name.includes('bas') && !name.includes('inkl') &&
       urlPath.includes('inkl') && urlPath.includes('bas')) return true;
+
+  // Model version mismatch — check if key model identifiers in name are missing from URL
+  // Extract significant model words (numbers, short identifiers like "xl", "360e", etc.)
+  const nameWords = name.replace(/[^a-zåäö0-9\s+]/g, ' ').split(/\s+/).filter(w => w.length > 0);
+  const urlSlug = urlPath.split('/').pop() || urlPath;
+  // Check for model-specific identifiers that should be in URL
+  const modelIds = nameWords.filter(w =>
+    /^\d{2,}[a-z]?$/.test(w) || // "360e", "5z", etc.
+    /^[a-z]\d+/.test(w) || // "x2", "g3", etc.
+    ['xl', 'lx', 'pro', 'plus', 'max', 'next'].includes(w)
+  );
+  for (const id of modelIds) {
+    // If the name has a specific model ID but the URL has a DIFFERENT one of the same type
+    if (!urlSlug.includes(id)) {
+      // Check if URL has a competing model ID instead
+      const alternatives: Record<string, string[]> = {
+        '360e': ['xl', '360', 'spin-xl'],
+        'xl': ['360e', 'spin-360'],
+        'x2': ['x1', 'rf-x1'],
+        'x1': ['x2'],
+        'lx': ['next'],
+        'next': ['lx'],
+        'pro': ['plus'],
+        'plus': ['pro'],
+      };
+      const alts = alternatives[id] || [];
+      if (alts.some(alt => urlSlug.includes(alt))) return true;
+    }
+  }
 
   return false;
 }
