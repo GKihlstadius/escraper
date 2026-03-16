@@ -4,6 +4,17 @@ import { scrapeCompetitor, generateRecommendations } from '@/lib/scraper/pipelin
 
 export const maxDuration = 300; // 5 min on Vercel Pro, 10s on Hobby
 
+// Wrap scrapeCompetitor with a hard timeout so one hanging store can't block others
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Timeout: ${label} exceeded ${ms}ms`)), ms);
+    promise.then(
+      (val) => { clearTimeout(timer); resolve(val); },
+      (err) => { clearTimeout(timer); reject(err); },
+    );
+  });
+}
+
 export async function GET(request: NextRequest) {
   // Verify cron secret
   const authHeader = request.headers.get('authorization');
@@ -17,24 +28,31 @@ export async function GET(request: NextRequest) {
   );
 
   // Get all active competitors with their scrape offset
+  // Process own stores first (most important), then competitors
   const { data: competitors } = await supabase
     .from('competitors')
-    .select('id, name, scrape_offset')
-    .eq('is_active', true);
+    .select('id, name, scrape_offset, is_own_store')
+    .eq('is_active', true)
+    .order('is_own_store', { ascending: false });
 
   if (!competitors?.length) {
     return NextResponse.json({ message: 'No active competitors' });
   }
 
-  // Give each competitor a proportional time budget (total 280s, keep 20s for recs + response)
-  const totalBudgetMs = 280_000;
+  // Give each competitor a proportional time budget (total 270s, keep 30s for recs + response)
+  const totalBudgetMs = 270_000;
   const perCompetitorMs = Math.floor(totalBudgetMs / competitors.length);
 
   const results = [];
   for (const competitor of competitors) {
     try {
       const offset = competitor.scrape_offset || 0;
-      const result = await scrapeCompetitor(competitor.id, perCompetitorMs, offset);
+      // Hard timeout per competitor — if it hangs, skip and continue with next
+      const result = await withTimeout(
+        scrapeCompetitor(competitor.id, perCompetitorMs, offset),
+        perCompetitorMs + 5_000, // 5s grace period
+        competitor.name,
+      );
       results.push(result);
 
       // Save progress: rotate through non-priority URLs across runs

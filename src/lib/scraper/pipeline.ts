@@ -66,12 +66,21 @@ export async function scrapeCompetitor(competitorId: string, timeBudgetMs?: numb
   const startTime = Date.now();
 
   try {
-    // Step 1: Discover product URLs
+    // Step 1: Discover product URLs (with timeout to prevent hanging)
     const isOwn = competitor.is_own_store;
     const urlLimit = isOwn ? 1500 : 1000;
     let urls: string[] = [];
     if (competitor.sitemap_url) {
-      urls = await discoverProductUrls(competitor.sitemap_url, urlLimit, isOwn);
+      try {
+        urls = await Promise.race([
+          discoverProductUrls(competitor.sitemap_url, urlLimit, isOwn),
+          new Promise<string[]>((_, reject) =>
+            setTimeout(() => reject(new Error('Sitemap discovery timeout')), 60_000)
+          ),
+        ]);
+      } catch (err) {
+        result.errors.push(`URL discovery: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     // Fallback: scrape category pages for stores with no product URLs in sitemap
