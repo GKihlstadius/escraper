@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
-import { ProductPriceComparison } from '@/components/dashboard/price-charts';
+import { ProductPriceComparison, PriceHistoryChart } from '@/components/dashboard/price-charts';
 import { ExportButton } from '@/components/dashboard/export-button';
 import Link from 'next/link';
 import {
@@ -97,6 +97,34 @@ export default async function DashboardPage() {
 
   const comparisonCompetitors = competitors
     .map(c => ({ id: c.id, name: c.name, isOwn: c.is_own_store, color: c.color }));
+
+  // ── Price history overview (last 30 days) ──
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const cutoff = thirtyDaysAgo.toISOString().slice(0, 10);
+
+  const historyByDate = new Map<string, { ownTotal: number; ownCount: number; compMin: number }>();
+  for (const p of prices) {
+    const date = p.scraped_at.slice(0, 10);
+    if (date < cutoff) continue;
+    if (!historyByDate.has(date)) historyByDate.set(date, { ownTotal: 0, ownCount: 0, compMin: Infinity });
+    const entry = historyByDate.get(date)!;
+    if (ownStoreIds.has(p.competitor_id)) {
+      entry.ownTotal += p.price;
+      entry.ownCount++;
+    } else {
+      entry.compMin = Math.min(entry.compMin, p.price);
+    }
+  }
+
+  const priceHistoryData = [...historyByDate.entries()]
+    .filter(([, v]) => v.ownCount > 0 && v.compMin < Infinity)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, v]) => ({
+      date,
+      avg: Math.round(v.ownTotal / v.ownCount),
+      min: Math.round(v.compMin),
+    }));
 
   // Price position
   const variantLatest = new Map<string, Map<string, number>>();
@@ -229,6 +257,14 @@ export default async function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* ── Price History Overview ── */}
+      {priceHistoryData.length > 0 && (
+        <div className="bg-white rounded-xl border border-zinc-100 p-3 sm:p-5">
+          <h3 className="text-sm font-medium text-zinc-900 mb-4">Prisutveckling (30 dagar)</h3>
+          <PriceHistoryChart data={priceHistoryData} />
+        </div>
+      )}
 
       {/* ── Product Price Comparison ── */}
       <div className="bg-white rounded-xl border border-zinc-100 p-3 sm:p-5">

@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { Check, CheckCheck, ExternalLink, ArrowRight } from 'lucide-react';
+import { Check, CheckCheck, ExternalLink, ArrowRight, ChevronLeft, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
 
 interface Alert {
@@ -61,6 +61,7 @@ export default function AlertsPage() {
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState('alla');
   const [severityFilter, setSeverityFilter] = useState('alla');
+  const [page, setPage] = useState(1);
   const [urlMap, setUrlMap] = useState<Map<string, string>>(new Map());
   // Map: productId -> { price, storeName } for own stores
   const [ownPriceMap, setOwnPriceMap] = useState<Map<string, OwnPriceInfo>>(new Map());
@@ -178,6 +179,13 @@ export default function AlertsPage() {
 
   const unreadCount = alerts.filter((a) => !a.is_read).length;
 
+  const ITEMS_PER_PAGE = 30;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / ITEMS_PER_PAGE));
+  const safePage = Math.min(page, totalPages);
+  const startIndex = (safePage - 1) * ITEMS_PER_PAGE;
+  const endIndex = Math.min(startIndex + ITEMS_PER_PAGE, filtered.length);
+  const paginated = filtered.slice(startIndex, endIndex);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -196,7 +204,7 @@ export default function AlertsPage() {
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
-        <Select value={typeFilter} onValueChange={(v) => v && setTypeFilter(v)}>
+        <Select value={typeFilter} onValueChange={(v) => { if (v) { setTypeFilter(v); setPage(1); } }}>
           <SelectTrigger className="w-full sm:w-48">
             <SelectValue placeholder="Typ" />
           </SelectTrigger>
@@ -207,7 +215,7 @@ export default function AlertsPage() {
             ))}
           </SelectContent>
         </Select>
-        <Select value={severityFilter} onValueChange={(v) => v && setSeverityFilter(v)}>
+        <Select value={severityFilter} onValueChange={(v) => { if (v) { setSeverityFilter(v); setPage(1); } }}>
           <SelectTrigger className="w-full sm:w-48">
             <SelectValue placeholder="Allvarlighet" />
           </SelectTrigger>
@@ -235,7 +243,10 @@ export default function AlertsPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {filtered.map((alert) => {
+          <p className="text-sm text-muted-foreground">
+            Visar {startIndex + 1}-{endIndex} av {filtered.length} larm
+          </p>
+          {paginated.map((alert) => {
             const externalUrl = alert.product_id && alert.competitor_id
               ? urlMap.get(`${alert.product_id}:${alert.competitor_id}`)
               : null;
@@ -318,6 +329,32 @@ export default function AlertsPage() {
               </Card>
             );
           })}
+
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-2 pt-4">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={safePage <= 1}
+              >
+                <ChevronLeft className="h-4 w-4 mr-1" />
+                Föregående
+              </Button>
+              <span className="text-sm text-muted-foreground px-3">
+                Sida {safePage} av {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={safePage >= totalPages}
+              >
+                Nästa
+                <ChevronRight className="h-4 w-4 ml-1" />
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </div>

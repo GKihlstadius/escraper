@@ -14,7 +14,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
-import { Plus, Search, X, SlidersHorizontal, Package } from 'lucide-react';
+import { Plus, Search, X, SlidersHorizontal, Package, ChevronLeft, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
 import { CATEGORY_LABELS, CATEGORY_GROUPS, type ProductCategory } from '@/types';
 import { AddProductDialog } from '@/components/products/add-product-dialog';
@@ -50,6 +50,8 @@ export default function ProductsPage() {
   const [stockFilter, setStockFilter] = useState<'alla' | 'i_lager' | 'slut'>('alla');
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
+  const [page, setPage] = useState(1);
+  const ITEMS_PER_PAGE = 24;
 
   useEffect(() => {
     loadProducts();
@@ -118,6 +120,17 @@ export default function ProductsPage() {
     return true;
   });
 
+  // Reset page when filters change
+  useEffect(() => {
+    setPage(1);
+  }, [search, categoryGroup, subCategory, brandFilter, colorFilter, stockFilter]);
+
+  // Pagination
+  const totalPages = Math.max(1, Math.ceil(filtered.length / ITEMS_PER_PAGE));
+  const paginatedProducts = filtered.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
+  const showingFrom = filtered.length === 0 ? 0 : (page - 1) * ITEMS_PER_PAGE + 1;
+  const showingTo = Math.min(page * ITEMS_PER_PAGE, filtered.length);
+
   const activeFilterCount = [
     brandFilter !== 'alla',
     colorFilter !== 'alla',
@@ -145,7 +158,11 @@ export default function ProductsPage() {
     <div className="space-y-6">
       {/* Top bar */}
       <div className="flex items-center justify-between">
-        <p className="text-[#6B7280] text-sm">{filtered.length} av {products.length} produkter</p>
+        <p className="text-[#6B7280] text-sm">
+          {filtered.length === 0
+            ? `0 av ${products.length} produkter`
+            : `Visar ${showingFrom}-${showingTo} av ${filtered.length} produkter`}
+        </p>
         <Button
           onClick={() => setShowAddDialog(true)}
           className="bg-gradient-to-br from-[#7C3AED] to-[#EC4899] hover:opacity-90"
@@ -275,11 +292,42 @@ export default function ProductsPage() {
           )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {filtered.map((product) => (
-            <ProductCard key={product.id} product={product} />
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {paginatedProducts.map((product) => (
+              <ProductCard key={product.id} product={product} />
+            ))}
+          </div>
+
+          {/* Pagination controls */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-2 pt-4">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page === 1}
+                className="rounded-xl border-[#E5E7EB] text-[#6B7280] hover:text-[#7C3AED] hover:border-[#7C3AED]/30 disabled:opacity-40"
+              >
+                <ChevronLeft className="h-4 w-4 mr-1" />
+                Föregående
+              </Button>
+              <span className="text-sm text-[#6B7280] px-3">
+                Sida {page} av {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+                className="rounded-xl border-[#E5E7EB] text-[#6B7280] hover:text-[#7C3AED] hover:border-[#7C3AED]/30 disabled:opacity-40"
+              >
+                Nästa
+                <ChevronRight className="h-4 w-4 ml-1" />
+              </Button>
+            </div>
+          )}
+        </>
       )}
 
       <AddProductDialog

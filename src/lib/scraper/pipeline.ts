@@ -650,8 +650,9 @@ export async function scrapeUrl(
   }
 
   // Step 3: Save the product
+  const storeId = ownStoreId as string;
   const result: ScrapeResult = {
-    competitorId: ownStoreId,
+    competitorId: storeId,
     competitorName: 'Manual add',
     productsScraped: 0,
     newPrices: 0,
@@ -662,7 +663,7 @@ export async function scrapeUrl(
     errors: [],
   };
 
-  await saveProduct(supabase, ownStoreId, parsed, result);
+  await saveProduct(supabase, storeId, parsed, result);
 
   // Step 4: Find the saved product (may already exist if duplicate)
   const normalizedName = normalizeName(parsed.name);
