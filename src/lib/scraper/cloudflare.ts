@@ -118,10 +118,11 @@ export async function renderPage(url: string): Promise<string> {
     const html = await res.text();
 
     // Check if the HTML contains actual product data (not just a SPA shell)
+    // Only use reliable structured data indicators — the <h1> + 'kr' heuristic
+    // causes false positives on SPA shells (e.g. My Baby's Abicart template)
     const hasProductData = html.includes('application/ld+json') ||
       html.includes('itemprop="price"') ||
-      html.includes('product:price:amount') ||
-      (html.includes('<h1') && (html.includes('kr') || html.includes('SEK')));
+      html.includes('product:price:amount');
 
     if (hasProductData) return html;
 
