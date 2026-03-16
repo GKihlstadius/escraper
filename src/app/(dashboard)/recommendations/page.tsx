@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import Link from 'next/link';
-import { ArrowRight, TrendingDown, TrendingUp, ExternalLink } from 'lucide-react';
+import { ArrowRight, TrendingDown, TrendingUp, ExternalLink, Clock } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,10 +15,16 @@ interface PriceDiff {
   diff: number;
   diffPct: number;
   url: string | null;
+  scrapedAt: string;
 }
 
 export default async function RecommendationsPage() {
   const supabase = await createClient();
+
+  // Only consider prices from the last 30 days
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const cutoff = thirtyDaysAgo.toISOString();
 
   const [productsRes, competitorsRes, variantsRes] = await Promise.all([
     supabase.from('products').select('id, name, brand').eq('is_active', true),
@@ -33,16 +39,21 @@ export default async function RecommendationsPage() {
   const productMap = new Map(products.map(p => [p.id, p]));
   const compMap = new Map(competitors.map(c => [c.id, c]));
   const variantToProduct = new Map(variants.map(v => [v.id, v.product_id]));
+  const activeProductIds = new Set(products.map(p => p.id));
+  const activeVariantIds = new Set(
+    variants.filter(v => activeProductIds.has(v.product_id)).map(v => v.id)
+  );
   const ownStores = competitors.filter(c => c.is_own_store);
   const ownStoreIds = new Set(ownStores.map(c => c.id));
 
-  // Get latest prices per variant+competitor (paginated to overcome 1000-row limit)
-  let allPrices: { variant_id: string; competitor_id: string; price: number; url: string | null }[] = [];
+  // Get latest prices - only from last 30 days, with scraped_at for freshness
+  let allPrices: { variant_id: string; competitor_id: string; price: number; url: string | null; scraped_at: string }[] = [];
   let offset = 0;
   while (true) {
     const { data } = await supabase
       .from('product_prices')
-      .select('variant_id, competitor_id, price, url')
+      .select('variant_id, competitor_id, price, url, scraped_at')
+      .gte('scraped_at', cutoff)
       .order('scraped_at', { ascending: false })
       .range(offset, offset + 999);
     if (!data || data.length === 0) break;
@@ -52,11 +63,11 @@ export default async function RecommendationsPage() {
   }
 
   // Keep only latest price per variant+competitor
-  const latestPrices = new Map<string, { price: number; url: string | null }>();
-  for (const p of allPrices || []) {
+  const latestPrices = new Map<string, { price: number; url: string | null; scraped_at: string }>();
+  for (const p of allPrices) {
     const key = `${p.variant_id}:${p.competitor_id}`;
     if (!latestPrices.has(key)) {
-      latestPrices.set(key, { price: p.price, url: p.url });
+      latestPrices.set(key, { price: p.price, url: p.url, scraped_at: p.scraped_at });
     }
   }
 
@@ -89,10 +100,13 @@ export default async function RecommendationsPage() {
       const comp = compMap.get(compId);
       if (!comp) continue;
 
-      // Use the first own store price for comparison
+      // Price sanity check — skip if competitor price is wildly different (>5x or <0.1x)
       for (const own of ownPrices) {
+        const ratio = entry.price / own.price;
+        if (ratio > 5 || ratio < 0.1) continue;
+
         const diff = own.price - entry.price;
-        if (Math.abs(diff) < 1) continue; // Skip if essentially same price
+        if (Math.abs(diff) < 1) continue;
 
         diffs.push({
           productId: product.id,
@@ -105,6 +119,7 @@ export default async function RecommendationsPage() {
           diff,
           diffPct: (diff / own.price) * 100,
           url: entry.url,
+          scrapedAt: entry.scraped_at,
         });
       }
     }
@@ -130,7 +145,7 @@ export default async function RecommendationsPage() {
       <div>
         <h1 className="text-xl sm:text-2xl font-bold text-zinc-900">Prisrekommendationer</h1>
         <p className="text-sm text-zinc-500 mt-1">
-          Prisskillnader mellan era butiker och konkurrenter
+          Prisskillnader mellan era butiker och konkurrenter (senaste 30 dagarna)
         </p>
       </div>
 
@@ -196,6 +211,10 @@ export default async function RecommendationsPage() {
 function PriceDiffRow({ diff: d, type }: { diff: PriceDiff; type: 'expensive' | 'cheaper' }) {
   const absDiff = Math.abs(d.diff);
   const absPct = Math.abs(d.diffPct);
+  const scrapedDate = new Date(d.scrapedAt);
+  const daysAgo = Math.floor((Date.now() - scrapedDate.getTime()) / 86400000);
+  const freshness = daysAgo === 0 ? 'Idag' : daysAgo === 1 ? 'Igår' : `${daysAgo} dagar sedan`;
+  const isStale = daysAgo > 14;
 
   return (
     <Link href={`/products/${d.productId}`}>
@@ -229,12 +248,19 @@ function PriceDiffRow({ diff: d, type }: { diff: PriceDiff; type: 'expensive' | 
             {type === 'expensive' ? '+' : '-'}{absDiff.toLocaleString('sv-SE')} kr ({absPct.toFixed(0)}%)
           </div>
 
+          {/* Freshness indicator */}
+          <div className={`shrink-0 flex items-center gap-1 text-[10px] ${isStale ? 'text-amber-500' : 'text-zinc-400'}`} title={`Pris hämtat: ${scrapedDate.toLocaleDateString('sv-SE')}`}>
+            <Clock className="h-3 w-3" />
+            {freshness}
+          </div>
+
           {/* External link */}
           {d.url && (
             <a
               href={d.url}
               target="_blank"
               rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
               className="text-zinc-300 hover:text-zinc-500 transition-colors shrink-0"
             >
               <ExternalLink className="h-3.5 w-3.5" />
