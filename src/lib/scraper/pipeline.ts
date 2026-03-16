@@ -23,6 +23,7 @@ interface ScrapeResult {
   errors: string[];
   totalUrls: number;
   urlsProcessed: number;
+  nextOffset: number;
   hasMore: boolean;
 }
 
@@ -47,6 +48,7 @@ export async function scrapeCompetitor(competitorId: string, timeBudgetMs?: numb
     errors: [],
     totalUrls: 0,
     urlsProcessed: 0,
+    nextOffset: 0,
     hasMore: false,
   };
 
@@ -115,29 +117,37 @@ export async function scrapeCompetitor(competitorId: string, timeBudgetMs?: numb
       return result;
     }
 
-    // Prioritize stroller/car-seat URLs over accessories
+    // Split URLs into priority (strollers/car seats) and other (brand-only matches)
     const PRIORITY_KEYWORDS = [
-      'barnvagn', 'duovagn', 'sittvagn', 'sulky', 'joggingvagn',
+      'barnvagn', 'duovagn', 'sittvagn', 'sulky', 'joggingvagn', 'resevagn',
       'bilstol', 'bilbarnstol', 'babyskydd', 'bälteskudde',
       'i-size', 'isofix',
     ];
-    urls.sort((a, b) => {
-      const aPath = a.toLowerCase();
-      const bPath = b.toLowerCase();
-      const aHas = PRIORITY_KEYWORDS.some(kw => aPath.includes(kw)) ? 0 : 1;
-      const bHas = PRIORITY_KEYWORDS.some(kw => bPath.includes(kw)) ? 0 : 1;
-      return aHas - bHas;
-    });
+    const priorityUrls: string[] = [];
+    const otherUrls: string[] = [];
+    for (const url of urls) {
+      const path = url.toLowerCase();
+      if (PRIORITY_KEYWORDS.some(kw => path.includes(kw))) {
+        priorityUrls.push(url);
+      } else {
+        otherUrls.push(url);
+      }
+    }
+
+    // Build scrape list: all priority URLs first, then rotate through others using offset
+    const startOffset = offset || 0;
+    const rotatedOthers = startOffset < otherUrls.length
+      ? [...otherUrls.slice(startOffset), ...otherUrls.slice(0, startOffset)]
+      : otherUrls;
+    const scrapeList = [...priorityUrls, ...rotatedOthers];
 
     // Step 2: Scrape each URL
     // Hard time limit: stop before Vercel timeout to allow log update
     const MAX_SCRAPE_MS = timeBudgetMs ? timeBudgetMs - 10_000 : 250_000;
-    const startOffset = offset || 0;
-    const urlSlice = urls.slice(startOffset);
     result.totalUrls = urls.length;
 
     let processed = 0;
-    for (const url of urlSlice) {
+    for (const url of scrapeList) {
       // Safety: stop if approaching timeout
       if (Date.now() - startTime > MAX_SCRAPE_MS) {
         break;
@@ -158,8 +168,13 @@ export async function scrapeCompetitor(competitorId: string, timeBudgetMs?: numb
       }
     }
 
-    result.urlsProcessed = startOffset + processed;
-    result.hasMore = result.urlsProcessed < urls.length;
+    result.urlsProcessed = processed;
+    // Track how far we got through the "other" URLs for next run's offset
+    const othersProcessed = Math.max(0, processed - priorityUrls.length);
+    result.nextOffset = otherUrls.length > 0
+      ? (startOffset + othersProcessed) % otherUrls.length
+      : 0;
+    result.hasMore = otherUrls.length > 0 && othersProcessed < otherUrls.length;
 
     await updateLog(
       supabase, log?.id, 'SUCCESS',
@@ -659,6 +674,7 @@ export async function scrapeUrl(
     alerts: 0,
     totalUrls: 1,
     urlsProcessed: 1,
+    nextOffset: 0,
     hasMore: false,
     errors: [],
   };

@@ -16,10 +16,10 @@ export async function GET(request: NextRequest) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 
-  // Get all active competitors
+  // Get all active competitors with their scrape offset
   const { data: competitors } = await supabase
     .from('competitors')
-    .select('id, name')
+    .select('id, name, scrape_offset')
     .eq('is_active', true);
 
   if (!competitors?.length) {
@@ -33,8 +33,15 @@ export async function GET(request: NextRequest) {
   const results = [];
   for (const competitor of competitors) {
     try {
-      const result = await scrapeCompetitor(competitor.id, perCompetitorMs);
+      const offset = competitor.scrape_offset || 0;
+      const result = await scrapeCompetitor(competitor.id, perCompetitorMs, offset);
       results.push(result);
+
+      // Save progress: rotate through non-priority URLs across runs
+      await supabase
+        .from('competitors')
+        .update({ scrape_offset: result.nextOffset })
+        .eq('id', competitor.id);
     } catch (err) {
       results.push({
         competitorId: competitor.id,
