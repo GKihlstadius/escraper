@@ -231,6 +231,15 @@ async function saveProduct(
 
   if (!product) return;
 
+  // Re-activate inactive products that get matched again
+  if (!product.is_active) {
+    await supabase
+      .from('products')
+      .update({ is_active: true })
+      .eq('id', product.id);
+    product.is_active = true;
+  }
+
   // Find or create variant
   const variantName = parsed.color
     ? `${modelName} ${parsed.color}`
@@ -426,18 +435,22 @@ async function findProduct(
   }
 
   // Step 2: Exact normalized_name match (with type compatibility check)
+  // Search ALL products (including inactive) to avoid creating duplicates
   const modelNormalized = normalizeName(extractModelName(parsed.name));
   {
     const { data } = await supabase
       .from('products')
       .select('*')
       .eq('normalized_name', modelNormalized)
-      .limit(5);
+      .limit(10);
     if (data && data.length > 0) {
+      // Prefer active products, but allow matching inactive ones too
       const compatible = data.filter((d: { name: string }) => areTypesCompatible(parsed.name, d.name, parsed.url));
-      if (compatible.length === 1) return compatible[0];
-      if (compatible.length > 1) {
-        const best = pickBestMatch(compatible, parsed.name);
+      const active = compatible.filter((d: { is_active: boolean }) => d.is_active);
+      const candidates = active.length > 0 ? active : compatible;
+      if (candidates.length === 1) return candidates[0];
+      if (candidates.length > 1) {
+        const best = pickBestMatch(candidates, parsed.name);
         if (best) return best;
       }
     }
@@ -446,6 +459,12 @@ async function findProduct(
   // Step 3: Model key ILIKE with brand match (fuzzy brand)
   const modelKey = extractModelKey(parsed.name, parsed.brand);
   const brandCandidates = await findByBrand(supabase, parsed.brand);
+
+  // Helper: prefer active products when multiple match
+  const preferActive = (candidates: Array<{ id: string; name: string; normalized_name: string; is_active: boolean }>) => {
+    const active = candidates.filter(c => c.is_active);
+    return active.length > 0 ? active : candidates;
+  };
 
   if (modelKey && modelKey !== 'okänt') {
     const brandLower = parsed.brand.toLowerCase().replace(/\s+/g, '-');
@@ -456,20 +475,20 @@ async function findProduct(
       const nameMatches = brandCandidates.filter((p: { normalized_name: string }) =>
         allWordsLower.every(w => p.normalized_name.includes(w))
       );
-      const compatible = nameMatches.filter((d: { name: string }) => areTypesCompatible(parsed.name, d.name, parsed.url));
+      const compatible = preferActive(nameMatches.filter((d: { name: string }) => areTypesCompatible(parsed.name, d.name, parsed.url)));
       if (compatible.length === 1) return compatible[0];
       if (compatible.length > 1) {
         const best = pickBestMatch(compatible, parsed.name);
         if (best) return best;
       }
 
-      // Try with just the first model word (e.g., "fox", "fame", "sirona")
-      const firstWord = allWordsLower[0];
-      if (firstWord && firstWord.length >= 3) {
-        const firstWordMatches = brandCandidates.filter((p: { normalized_name: string }) =>
-          p.normalized_name.includes(firstWord)
+      // Try with just the first 2 model words (e.g., "cloud t", "sirona t", "fox 5")
+      const firstTwo = allWordsLower.slice(0, 2);
+      if (firstTwo.length >= 1 && firstTwo[0].length >= 3) {
+        const partialMatches = brandCandidates.filter((p: { normalized_name: string }) =>
+          firstTwo.every(w => p.normalized_name.includes(w))
         );
-        const compat2 = firstWordMatches.filter((d: { name: string }) => areTypesCompatible(parsed.name, d.name, parsed.url));
+        const compat2 = preferActive(partialMatches.filter((d: { name: string }) => areTypesCompatible(parsed.name, d.name, parsed.url)));
         if (compat2.length === 1) return compat2[0];
         if (compat2.length > 1) {
           const best = pickBestMatch(compat2, parsed.name);
@@ -481,7 +500,7 @@ async function findProduct(
 
   // Step 4: Brand-only search with token overlap scoring
   if (brandCandidates.length > 0) {
-    const compatible = brandCandidates.filter((c: { name: string }) => areTypesCompatible(parsed.name, c.name, parsed.url));
+    const compatible = preferActive(brandCandidates.filter((c: { name: string }) => areTypesCompatible(parsed.name, c.name, parsed.url)));
     const best = pickBestMatch(compatible, parsed.name, 0.7); // Higher threshold to avoid false matches
     if (best) return best;
   }
@@ -529,33 +548,32 @@ function getBrandFamily(brand: string): string {
   return lower.replace(/[\s\-]+/g, '');
 }
 
-// Find all active products matching a brand (with fuzzy matching)
+// Find all products matching a brand (with fuzzy matching)
+// Searches ALL products (including inactive) to avoid creating duplicates
 async function findByBrand(
   supabase: SupabaseServiceClient,
   brand: string
-): Promise<Array<{ id: string; name: string; normalized_name: string; brand: string }>> {
+): Promise<Array<{ id: string; name: string; normalized_name: string; brand: string; is_active: boolean }>> {
   const family = getBrandFamily(brand);
   const aliases = BRAND_ALIASES[family] || [brand.toLowerCase()];
 
   // Query with multiple OR conditions for brand aliases
-  let allResults: Array<{ id: string; name: string; normalized_name: string; brand: string }> = [];
+  let allResults: Array<{ id: string; name: string; normalized_name: string; brand: string; is_active: boolean }> = [];
   for (const alias of aliases) {
     const { data } = await supabase
       .from('products')
-      .select('id, name, normalized_name, brand')
-      .eq('is_active', true)
+      .select('id, name, normalized_name, brand, is_active')
       .ilike('brand', alias)
-      .limit(100);
+      .limit(200);
     if (data) allResults.push(...data);
   }
 
   // Also try exact match as fallback
   const { data: exact } = await supabase
     .from('products')
-    .select('id, name, normalized_name, brand')
-    .eq('is_active', true)
+    .select('id, name, normalized_name, brand, is_active')
     .eq('brand', brand)
-    .limit(100);
+    .limit(200);
   if (exact) allResults.push(...exact);
 
   // Deduplicate

@@ -66,6 +66,14 @@ const COLOR_PATTERNS = [
   /\b(orange|coral|peach)\b/i,
   /\b(silver|graphite)\b/i,
   /\b(cream|ivory|pearl)\b/i,
+  // Product-specific color names (common in baby products)
+  /\b(sepia|mirage|moon|fern|cocoa|cedar|hazel|truffle)\b/i,
+  /\b(twillic|sandy|space|dusty|ocean|arctic|mineral)\b/i,
+  /\b(platinum|leaf|cozy|nautical|magic|eclipse|thunder)\b/i,
+  /\b(rosegold|stone|onyx|almond|glacier|storm|fossil)\b/i,
+  /\b(everett|alaska|autumn|heritage|elegance)\b/i,
+  /\b(cosmos|midnight|peak\s*mesh|metallic|mélange|melange)\b/i,
+  /\b(cementgrå|khakigrön|vanilla|brilliant)\b/i,
 ];
 
 export function parsePrice(text: string): number | null {
@@ -141,7 +149,7 @@ export function extractModelName(name: string): string {
 // Words to strip from model keys (not useful for matching)
 const MODEL_STRIP_WORDS = [
   'inkl', 'inkl.', 'inklusive', 'med', 'plus',
-  'onesize', 'one-size', '2024', '2025', '2023', '2022', '2026',
+  'onesize', 'one-size', '2022', '2023', '2024', '2025', '2026',
   'essential', 'authentic', 'fresh', 'twillic', 'cab',
   'bilbarnstol', 'bilstol', 'bälteskudde', 'bältesstol',
   'barnvagn', 'duovagn', 'sittvagn', 'syskonvagn', 'joggingvagn',
@@ -151,6 +159,10 @@ const MODEL_STRIP_WORDS = [
   'babyskydd', 'i-size', 'r129', 'r44',
   'och', 'för', 'till', 'med', 'av', 'den', 'det', 'nya',
   'stroller', 'pushchair', 'pram', 'car', 'seat',
+  // Frame/chassis descriptors
+  'outdoor', 'air', 'ergo', 'flat',
+  // Common non-model descriptors
+  'basic', '0-13', 'kg', 'chrome',
 ];
 
 // Product type categories for matching discrimination
@@ -284,8 +296,12 @@ export function areTypesCompatible(
 // Extract a canonical model key for cross-store matching.
 // e.g., "Maxi-Cosi Fame Sittvagn Twillic Truffle" → "maxi-cosi fame"
 //       "Fame Sittvagn - Twillic" → "maxi-cosi fame" (when brand detected)
+//       "Cybex Cloud T i-size PLUS Babyskydd Leaf" → "cybex cloud"
 export function extractModelKey(name: string, brand?: string): string {
   let text = name.toLowerCase();
+
+  // Remove everything in parentheses (often color/frame info)
+  text = text.replace(/\([^)]*\)/g, '');
 
   // Strip colors
   for (const pattern of COLOR_PATTERNS) {
@@ -312,9 +328,9 @@ export function extractModelKey(name: string, brand?: string): string {
   const brandWords = detectedBrand.split('-');
   words = words.filter(w => !brandWords.includes(w));
 
-  // Take the first 2-3 significant model words
+  // Take the first 2-4 significant model words
   // These are the words that identify the model (e.g., "fox 5", "fame", "sirona t", "izi twist")
-  const modelWords = words.filter(w => w.length >= 2).slice(0, 3);
+  const modelWords = words.filter(w => w.length >= 2).slice(0, 4);
 
   // Combine brand + model words
   const key = [detectedBrand, ...modelWords].join(' ').trim();

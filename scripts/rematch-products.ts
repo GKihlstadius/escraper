@@ -1,251 +1,408 @@
-// Re-match: find competitor products that should be linked to our own products
-// by using looser brand matching and better name comparison
+/**
+ * Re-match orphaned products across stores.
+ *
+ * Problem: Products scraped from own stores and competitors often end up as
+ * separate product records because name normalization differs between stores.
+ *
+ * This script:
+ * 1. Finds all products with prices
+ * 2. Groups them by brand + model key
+ * 3. For products that should be the same, merges them:
+ *    - Keeps the own-store product as the canonical one
+ *    - Moves competitor prices to the canonical product
+ *    - Deactivates the duplicate
+ */
+
 import { createClient } from '@supabase/supabase-js';
 import { config } from 'dotenv';
 config({ path: '.env.local' });
 
-const sb = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL as string,
-  process.env.SUPABASE_SERVICE_ROLE_KEY as string
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-const STRIP = new Set(['inkl', 'inklusive', 'med', 'plus', 'onesize', 'one-size', '2024', '2025', '2023', '2022', '2026',
-  'essential', 'authentic', 'fresh', 'twillic', 'cab', 'bilbarnstol', 'bilstol', 'bälteskudde', 'bältesstol',
-  'barnvagn', 'duovagn', 'sittvagn', 'syskonvagn', 'joggingvagn', 'liggvagn', 'sulky', 'buggy', 'kombivagn',
-  'barnvagnspaket', 'vagnspaket', 'paket', 'komplett', 'set', 'babyskydd', 'i-size', 'r129', 'r44',
-  'och', 'för', 'till', 'med', 'av', 'den', 'det', 'nya', 'stroller', 'pushchair', 'pram', 'car', 'seat']);
+// --- Normalization helpers (mirrors parser.ts but improved) ---
 
-function tokenize(s: string): Set<string> {
-  return new Set(s.toLowerCase().replace(/[^\w\såäöé-]/g, ' ').replace(/\s+/g, ' ').trim()
-    .split(/\s+/).filter(w => w.length > 1 && !STRIP.has(w)));
-}
+const COLOR_WORDS = new Set([
+  // English
+  'black', 'white', 'grey', 'gray', 'navy', 'blue', 'red', 'green', 'beige',
+  'brown', 'pink', 'yellow', 'purple', 'orange', 'silver', 'cream', 'ivory',
+  'pearl', 'graphite', 'coral', 'peach', 'lavender', 'rose', 'blush',
+  'midnight', 'dark', 'light', 'deep', 'matte', 'matt', 'pure', 'off',
+  'sky', 'steel', 'stormy', 'forest', 'pine', 'sage', 'olive', 'misty',
+  'cognac', 'espresso', 'chocolate', 'mustard', 'lemon', 'dune', 'desert',
+  'sand', 'taupe', 'khaki', 'burgundy', 'cherry',
+  // Swedish
+  'svart', 'vit', 'grå', 'blå', 'röd', 'grön', 'brun', 'rosa', 'gul', 'lila',
+  'marinblå', 'mörkblå',
+  // Product-specific color names (common in baby products)
+  'sepia', 'mirage', 'moon', 'fern', 'cocoa', 'cedar', 'hazel', 'truffle',
+  'twillic', 'sandy', 'space', 'dusty', 'ocean', 'arctic', 'mineral',
+  'platinum', 'leaf', 'cozy', 'nautical', 'magic', 'eclipse', 'thunder',
+  'rosegold', 'stone', 'onyx', 'almond', 'glacier', 'storm',
+  'everett', 'alaska', 'fossil', 'autumn', 'spring', 'summer', 'winter',
+  'heritage', 'classic', 'modern', 'fresh', 'essential', 'authentic',
+  'cab', 'elegance', 'cementgrå', 'khakigrön',
+]);
 
-function tokenOverlapScore(a: string, b: string): number {
-  const tokensA = tokenize(a);
-  const tokensB = tokenize(b);
-  if (tokensA.size === 0 || tokensB.size === 0) return 0;
-  let overlap = 0;
-  for (const t of tokensA) { if (tokensB.has(t)) overlap++; }
-  return overlap / Math.min(tokensA.size, tokensB.size);
-}
+const NOISE_WORDS = new Set([
+  'inkl', 'inklusive', 'med', 'plus', 'och', 'för', 'till', 'av', 'den', 'det', 'nya',
+  'onesize', 'one-size',
+  '2022', '2023', '2024', '2025', '2026',
+  'bilbarnstol', 'bilstol', 'bälteskudde', 'bältesstol',
+  'barnvagn', 'duovagn', 'sittvagn', 'syskonvagn', 'joggingvagn',
+  'liggvagn', 'sulky', 'buggy', 'kombivagn', 'barnvagnspaket',
+  'vagnspaket', 'paket', 'komplett', 'set',
+  'liggdel', 'sittdel', 'sittbas', 'chassi', 'chassis',
+  'babyskydd', 'i-size', 'r129', 'r44',
+  'stroller', 'pushchair', 'pram', 'car', 'seat',
+  'outdoor', 'air', 'ergo', 'flat',
+]);
 
-function normBrand(brand: string): string {
-  return brand.toLowerCase().replace(/[\s\-_]+/g, '').replace(/römer/g, '').replace(/details/g, '').trim();
-}
-
-// Map of known brand aliases
 const BRAND_ALIASES: Record<string, string[]> = {
-  'britax': ['britax', 'britaxrömer', 'britax römer', 'britaxromer'],
+  'britax': ['britax', 'britax römer', 'britax romer'],
   'maxi-cosi': ['maxi-cosi', 'maxicosi', 'maxi cosi'],
-  'stokke': ['stokke', 'stokke®'],
-  'elodie': ['elodie', 'elodie details', 'elodiedetails'],
+  'stokke': ['stokke'],
+  'elodie': ['elodie', 'elodie details'],
   'cybex': ['cybex'],
   'bugaboo': ['bugaboo'],
   'joie': ['joie'],
   'axkid': ['axkid'],
-  'besafe': ['besafe'],
+  'besafe': ['besafe', 'be safe'],
   'nuna': ['nuna'],
   'thule': ['thule'],
   'joolz': ['joolz'],
-  'emmaljunga': ['emmaljunga'],
+  'emmaljunga': ['emmaljunga', 'emmaljunga '],
   'crescent': ['crescent'],
+  'beemoo': ['beemoo'],
+  'kinderkraft': ['kinderkraft'],
+  'silver cross': ['silver cross', 'silvercross'],
+  'baby jogger': ['baby jogger', 'babyjogger'],
+  'uppababy': ['uppababy', 'uppa baby'],
+  'bebeconfort': ['bebeconfort', 'bébé confort', 'bebe confort'],
+  'lionelo': ['lionelo'],
+  'hauck': ['hauck'],
+  'doona': ['doona'],
+  'babyzen': ['babyzen'],
+  'peg perego': ['peg perego', 'pegperego'],
+  'cam': ['cam'],
+  'chicco': ['chicco'],
+  'inglesina': ['inglesina'],
+  'mutsy': ['mutsy'],
+  'mima': ['mima'],
+  'icandy': ['icandy', 'i-candy'],
+  'bumprider': ['bumprider'],
+  'ergobaby': ['ergobaby'],
+  'diono': ['diono'],
+  'recaro': ['recaro'],
 };
 
-function brandFamily(brand: string): string {
-  const lower = brand.toLowerCase().replace(/[\s\-_®]+/g, '');
+function normalizeBrand(brand: string): string {
+  const lower = brand.toLowerCase().replace(/[®™]+/g, '').trim();
   for (const [family, aliases] of Object.entries(BRAND_ALIASES)) {
     for (const alias of aliases) {
-      if (lower === alias.replace(/[\s\-_®]+/g, '') || lower.includes(alias.replace(/[\s\-_®]+/g, ''))) {
+      if (lower === alias || lower.includes(alias) || alias.includes(lower)) {
         return family;
       }
     }
   }
-  return lower;
+  return lower.replace(/[\s-]+/g, '');
+}
+
+function extractModelKey(name: string, brand: string): string {
+  let text = name.toLowerCase();
+
+  // Remove everything in parentheses (often colors/frame variants)
+  text = text.replace(/\([^)]*\)/g, '');
+
+  // Remove punctuation except hyphens
+  text = text.replace(/[^\w\såäöé-]/g, ' ').replace(/\s+/g, ' ').trim();
+
+  const words = text.split(/\s+/);
+
+  // Remove brand words, color words, noise words, and short/numeric tokens
+  const brandWords = new Set(normalizeBrand(brand).split(/[\s-]+/));
+  const significant = words.filter(w => {
+    if (w.length <= 1) return false;
+    if (brandWords.has(w)) return false;
+    if (COLOR_WORDS.has(w)) return false;
+    if (NOISE_WORDS.has(w)) return false;
+    if (/^\d{1,2}$/.test(w)) return false;
+    return true;
+  });
+
+  return significant.join(' ').trim();
+}
+
+// Product type detection for compatibility
+const ACCESSORY_KEYWORDS = [
+  'liggdel', 'sittdel', 'sittbas', 'chassi', 'chassis', 'adapter',
+  'regnskydd', 'sufflett', 'mugghållare', 'fotsack', 'insektsnät',
+  'solskydd', 'körkåpa', 'handtag', 'hjul', 'madrass', 'parasoll',
+  'transportväska', 'resväska', 'skötväska', 'cupholder', 'footmuff',
+  'raincover', 'syskonsits', 'extrasits', 'snack tray', 'barsele',
+  'cabin bag', 'travel bag', 'resebag', 'bilstolsbas', 'vindskydd',
+  'bas till', 'base t', 'base m', 'base z', 'i-base', 'basefix',
+  'familyfix', 'isofix', 'solsuflett',
+];
+
+const BUNDLE_KEYWORDS = ['paket', 'komplett', 'bundle', 'barnvagnspaket', 'vagnspaket', 'kombivagn'];
+
+function getProductType(name: string): 'accessory' | 'bundle' | 'product' {
+  const lower = name.toLowerCase();
+  if (ACCESSORY_KEYWORDS.some(k => lower.includes(k))) return 'accessory';
+  if (BUNDLE_KEYWORDS.some(k => lower.includes(k))) return 'bundle';
+  return 'product';
+}
+
+// Main types
+interface Product {
+  id: string;
+  name: string;
+  brand: string;
+  is_active: boolean;
+  normalized_name: string;
+}
+
+interface Variant {
+  id: string;
+  product_id: string;
+  color: string | null;
+  variant_name: string;
+  image: string | null;
+}
+
+interface Price {
+  id: string;
+  variant_id: string;
+  competitor_id: string;
+  price: number;
+}
+
+interface Competitor {
+  id: string;
+  name: string;
+  is_own_store: boolean;
+}
+
+async function fetchAll<T>(table: string, select: string): Promise<T[]> {
+  const all: T[] = [];
+  let offset = 0;
+  while (true) {
+    const { data, error } = await supabase.from(table).select(select).range(offset, offset + 999);
+    if (error) { console.error(`Error fetching ${table}:`, error.message); break; }
+    if (!data || data.length === 0) break;
+    all.push(...(data as T[]));
+    if (data.length < 1000) break;
+    offset += 1000;
+  }
+  return all;
 }
 
 async function main() {
-  const { data: comps } = await sb.from('competitors').select('id, name, is_own_store').eq('is_active', true);
-  const ownIds = new Set((comps || []).filter(c => c.is_own_store).map(c => c.id));
-  const compMap = new Map((comps || []).map(c => [c.id, c]));
+  console.log('Loading data...');
 
-  // Get ALL products (including inactive) to find duplicates
-  const { data: allProducts } = await sb.from('products').select('id, name, brand, normalized_name, is_active');
-  const { data: variants } = await sb.from('product_variants').select('id, product_id, color');
-  const { data: prices } = await sb.from('product_prices').select('id, variant_id, competitor_id, price, scraped_at')
-    .order('scraped_at', { ascending: false });
+  const products = await fetchAll<Product>('products', 'id, name, brand, is_active, normalized_name');
+  const variants = await fetchAll<Variant>('product_variants', 'id, product_id, color, variant_name, image');
+  const prices = await fetchAll<Price>('product_prices', 'id, variant_id, competitor_id, price');
+  const competitors = await fetchAll<Competitor>('competitors', 'id, name, is_own_store');
 
-  const varToProduct = new Map((variants || []).map(v => [v.id, v.product_id]));
-  const productVariants = new Map<string, typeof variants>();
-  for (const v of variants || []) {
-    if (!productVariants.has(v.product_id)) productVariants.set(v.product_id, []);
-    productVariants.get(v.product_id)!.push(v);
+  const compMap = Object.fromEntries(competitors.map(c => [c.id, c]));
+  const ownStoreIds = new Set(competitors.filter(c => c.is_own_store).map(c => c.id));
+
+  console.log(`Loaded: ${products.length} products, ${variants.length} variants, ${prices.length} prices`);
+
+  // Build indexes
+  const variantsByProduct = new Map<string, Variant[]>();
+  const variantMap = new Map<string, Variant>();
+  for (const v of variants) {
+    variantMap.set(v.id, v);
+    if (!variantsByProduct.has(v.product_id)) variantsByProduct.set(v.product_id, []);
+    variantsByProduct.get(v.product_id)!.push(v);
   }
 
-  // Latest price per variant+competitor
-  const latestPrice = new Map<string, { price: number; count: number }>();
-  for (const p of prices || []) {
-    const key = `${p.variant_id}:${p.competitor_id}`;
-    if (!latestPrice.has(key)) latestPrice.set(key, { price: p.price, count: 0 });
-    latestPrice.get(key)!.count++;
+  const pricesByVariant = new Map<string, Price[]>();
+  for (const p of prices) {
+    if (!pricesByVariant.has(p.variant_id)) pricesByVariant.set(p.variant_id, []);
+    pricesByVariant.get(p.variant_id)!.push(p);
   }
 
-  // Classify products
-  const ownProds: typeof allProducts = []; // products with own-store prices
-  const compProds: typeof allProducts = []; // products with competitor-only prices
+  // Classify products by which competitors have prices
+  const productCompetitors = new Map<string, Set<string>>();
+  for (const v of variants) {
+    const vPrices = pricesByVariant.get(v.id) || [];
+    for (const p of vPrices) {
+      if (!productCompetitors.has(v.product_id)) productCompetitors.set(v.product_id, new Set());
+      productCompetitors.get(v.product_id)!.add(p.competitor_id);
+    }
+  }
 
-  for (const prod of allProducts || []) {
-    const vars = productVariants.get(prod.id) || [];
-    let hasOwn = false, hasComp = false;
-    for (const v of vars) {
-      for (const [key] of latestPrice) {
-        if (!key.startsWith(v.id + ':')) continue;
-        const cid = key.split(':')[1];
-        if (ownIds.has(cid)) hasOwn = true;
-        else hasComp = true;
+  // Group ALL products (active and inactive with prices) by normalized brand + model key
+  const groups = new Map<string, Product[]>();
+
+  for (const p of products) {
+    if (!p.brand || !p.name) continue;
+    if (!productCompetitors.has(p.id)) continue; // skip products without any prices
+
+    const brand = normalizeBrand(p.brand);
+    const model = extractModelKey(p.name, p.brand);
+    if (!model || model.length < 2) continue;
+
+    const type = getProductType(p.name);
+    const key = `${brand}|${model}|${type}`;
+
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(p);
+  }
+
+  // Find groups with multiple products (potential duplicates to merge)
+  let mergeCount = 0;
+  let pricesMoved = 0;
+  let deactivated = 0;
+  const merges: Array<{ canonical: Product; duplicate: Product; key: string }> = [];
+
+  for (const [key, groupProducts] of groups) {
+    if (groupProducts.length < 2) continue;
+
+    // Separate into own-store and competitor-only products
+    const hasOwn: Product[] = [];
+    const compOnly: Product[] = [];
+
+    for (const p of groupProducts) {
+      const comps = productCompetitors.get(p.id) || new Set();
+      const hasOwnPrice = [...comps].some(c => ownStoreIds.has(c));
+      if (hasOwnPrice) {
+        hasOwn.push(p);
+      } else {
+        compOnly.push(p);
       }
     }
-    if (hasOwn && !hasComp) ownProds.push(prod);
-    if (hasComp && !hasOwn) compProds.push(prod);
+
+    if (hasOwn.length === 0 || compOnly.length === 0) continue;
+
+    // Pick canonical: own-store product with most prices
+    const getAvgPrice = (p: Product): number => {
+      const vars = variantsByProduct.get(p.id) || [];
+      const allPrices = vars.flatMap(v => (pricesByVariant.get(v.id) || []).map(pp => pp.price));
+      if (allPrices.length === 0) return 0;
+      return allPrices.reduce((a, b) => a + b, 0) / allPrices.length;
+    };
+
+    const getPriceCount = (p: Product): number => {
+      const vars = variantsByProduct.get(p.id) || [];
+      return vars.reduce((sum, v) => sum + (pricesByVariant.get(v.id)?.length || 0), 0);
+    };
+
+    const canonical = hasOwn.sort((a, b) => getPriceCount(b) - getPriceCount(a))[0];
+    const canonicalAvg = getAvgPrice(canonical);
+
+    // Merge competitor-only products into canonical
+    for (const dup of compOnly) {
+      const dupAvg = getAvgPrice(dup);
+
+      // Price sanity check
+      if (canonicalAvg > 0 && dupAvg > 0) {
+        const ratio = dupAvg / canonicalAvg;
+        if (ratio > 2.5 || ratio < 0.3) {
+          console.log(`  SKIP price mismatch: "${dup.name}" (avg ${Math.round(dupAvg)}) vs "${canonical.name}" (avg ${Math.round(canonicalAvg)})`);
+          continue;
+        }
+      }
+
+      merges.push({ canonical, duplicate: dup, key });
+    }
   }
 
-  console.log(`Egna utan konkurrent: ${ownProds.length}`);
-  console.log(`Konkurrent utan egna: ${compProds.length}`);
+  console.log(`\nFound ${merges.length} products to merge\n`);
 
-  // Try to match competitor products to own products
-  let merged = 0;
-  const mergedIds = new Set<string>();
+  const dryRun = process.argv.includes('--dry-run');
 
-  for (const compProd of compProds) {
-    const compFamily = brandFamily(compProd.brand);
+  for (const merge of merges) {
+    const { canonical: canon, duplicate: dup } = merge;
+    const dupVars = variantsByProduct.get(dup.id) || [];
+    const dupPriceCount = dupVars.reduce((sum, v) => sum + (pricesByVariant.get(v.id)?.length || 0), 0);
 
-    // Find own products with same brand family
-    const candidates = ownProds.filter(p => brandFamily(p.brand) === compFamily && !mergedIds.has(p.id));
-    if (candidates.length === 0) continue;
-
-    let bestMatch: typeof ownProds[0] | null = null;
-    let bestScore = 0;
-
-    for (const own of candidates) {
-      const score = tokenOverlapScore(own.name, compProd.name);
-      if (score > bestScore) {
-        bestScore = score;
-        bestMatch = own;
+    const dupComps = new Set<string>();
+    for (const v of dupVars) {
+      for (const p of pricesByVariant.get(v.id) || []) {
+        dupComps.add(compMap[p.competitor_id]?.name || p.competitor_id);
       }
     }
 
-    if (bestMatch && bestScore >= 0.6) {
-      console.log(`\nMERGE (score ${bestScore.toFixed(2)}):`);
-      console.log(`  Egen: ${bestMatch.brand} — ${bestMatch.name} [${bestMatch.id.slice(0, 8)}]`);
-      console.log(`  Konk: ${compProd.brand} — ${compProd.name} [${compProd.id.slice(0, 8)}]`);
+    console.log(`MERGE: "${dup.name}" (${[...dupComps].join(', ')}, ${dupPriceCount} prices)`);
+    console.log(`  INTO: "${canon.name}" (canonical)`);
 
-      // Move all variants+prices from competitor product to own product
-      const compVars = productVariants.get(compProd.id) || [];
-      for (const cv of compVars) {
-        // Check if own product already has a variant with this color
-        const ownVars = productVariants.get(bestMatch.id) || [];
-        const existingVar = ownVars.find(ov =>
-          (ov.color && cv.color && ov.color.toLowerCase() === cv.color?.toLowerCase()) ||
-          (!ov.color && !cv.color)
-        );
+    if (dryRun) continue;
 
-        if (existingVar) {
-          // Move prices from comp variant to own variant
-          const { count } = await sb.from('product_prices')
-            .update({ variant_id: existingVar.id })
-            .eq('variant_id', cv.id) as { count: number };
-          console.log(`  → Moved prices from variant ${cv.id.slice(0, 8)} to ${existingVar.id.slice(0, 8)}`);
+    // Execute merge
+    for (const dupVar of dupVars) {
+      const dupPrices = pricesByVariant.get(dupVar.id) || [];
+      if (dupPrices.length === 0) continue;
+
+      // Find or create matching variant in canonical product
+      const canonVars = variantsByProduct.get(canon.id) || [];
+      let targetVar = canonVars.find(v => v.color === dupVar.color);
+
+      if (!targetVar) {
+        const { data: newVar } = await supabase
+          .from('product_variants')
+          .insert({
+            product_id: canon.id,
+            color: dupVar.color,
+            variant_name: dupVar.variant_name,
+            image: dupVar.image,
+          })
+          .select()
+          .single();
+
+        if (newVar) {
+          targetVar = newVar as Variant;
+          if (!variantsByProduct.has(canon.id)) variantsByProduct.set(canon.id, []);
+          variantsByProduct.get(canon.id)!.push(targetVar);
+        }
+      }
+
+      if (!targetVar) continue;
+
+      // Move prices to canonical variant
+      const priceIds = dupPrices.map(p => p.id);
+      // Process in batches (Supabase has limits on IN clauses)
+      for (let i = 0; i < priceIds.length; i += 100) {
+        const batch = priceIds.slice(i, i + 100);
+        const { error } = await supabase
+          .from('product_prices')
+          .update({ variant_id: targetVar.id })
+          .in('id', batch);
+
+        if (error) {
+          console.log(`  ERROR moving prices: ${error.message}`);
         } else {
-          // Reassign the whole variant to own product
-          await sb.from('product_variants')
-            .update({ product_id: bestMatch.id })
-            .eq('id', cv.id);
-          console.log(`  → Reassigned variant ${cv.id.slice(0, 8)} to product ${bestMatch.id.slice(0, 8)}`);
+          pricesMoved += batch.length;
         }
       }
-
-      // Deactivate the competitor product
-      await sb.from('products').update({ is_active: false }).eq('id', compProd.id);
-      mergedIds.add(compProd.id);
-      merged++;
     }
+
+    // Deactivate duplicate
+    await supabase
+      .from('products')
+      .update({ is_active: false })
+      .eq('id', dup.id);
+
+    deactivated++;
+    mergeCount++;
   }
 
-  console.log(`\n=== Totalt mergade: ${merged} ===`);
+  console.log(`\n═══════════════════════════════════════`);
+  console.log(`  RESULTS${dryRun ? ' (DRY RUN)' : ''}`);
+  console.log(`═══════════════════════════════════════`);
+  console.log(`  Products merged: ${mergeCount}`);
+  console.log(`  Prices moved: ${pricesMoved}`);
+  console.log(`  Duplicates deactivated: ${deactivated}`);
 
-  // Also try to find inactive products that could match
-  // (products that were scraped from competitors but deactivated during cleanup)
-  const inactiveProducts = (allProducts || []).filter(p => !p.is_active);
-  console.log(`\nInaktiva produkter: ${inactiveProducts.length}`);
-
-  let reactivated = 0;
-  for (const inactive of inactiveProducts) {
-    if (mergedIds.has(inactive.id)) continue;
-    const vars = productVariants.get(inactive.id) || [];
-    if (vars.length === 0) continue;
-
-    // Check if this inactive product has competitor prices
-    let hasCompPrices = false;
-    for (const v of vars) {
-      for (const [key] of latestPrice) {
-        if (key.startsWith(v.id + ':')) {
-          const cid = key.split(':')[1];
-          if (!ownIds.has(cid)) { hasCompPrices = true; break; }
-        }
-      }
-      if (hasCompPrices) break;
-    }
-    if (!hasCompPrices) continue;
-
-    const inactiveFamily = brandFamily(inactive.brand);
-    const ownCandidates = ownProds.filter(p => brandFamily(p.brand) === inactiveFamily);
-
-    for (const own of ownCandidates) {
-      const score = tokenOverlapScore(own.name, inactive.name);
-      if (score >= 0.6) {
-        console.log(`\nREACTIVATE+MERGE (score ${score.toFixed(2)}):`);
-        console.log(`  Egen: ${own.brand} — ${own.name}`);
-        console.log(`  Inaktiv: ${inactive.brand} — ${inactive.name}`);
-
-        // Move variants+prices to own product
-        for (const cv of vars) {
-          const ownVars = productVariants.get(own.id) || [];
-          const existingVar = ownVars.find(ov =>
-            (ov.color && cv.color && ov.color.toLowerCase() === cv.color?.toLowerCase()) ||
-            (!ov.color && !cv.color)
-          );
-
-          if (existingVar) {
-            await sb.from('product_prices')
-              .update({ variant_id: existingVar.id })
-              .eq('variant_id', cv.id);
-          } else {
-            await sb.from('product_variants')
-              .update({ product_id: own.id })
-              .eq('id', cv.id);
-          }
-        }
-        reactivated++;
-        break;
-      }
-    }
+  if (dryRun) {
+    console.log(`\nRun without --dry-run to execute merges`);
   }
-
-  console.log(`\nReaktiverade+mergade: ${reactivated}`);
-
-  // Final stats
-  const { data: finalPrices } = await sb.from('product_prices').select('variant_id, competitor_id');
-  const { data: finalVariants } = await sb.from('product_variants').select('id, product_id');
-  const finalVarToProduct = new Map((finalVariants || []).map(v => [v.id, v.product_id]));
-  const withOwn = new Set<string>();
-  const withComp = new Set<string>();
-  for (const p of finalPrices || []) {
-    const pid = finalVarToProduct.get(p.variant_id);
-    if (!pid) continue;
-    if (ownIds.has(p.competitor_id)) withOwn.add(pid);
-    else withComp.add(pid);
-  }
-  const comparable = [...withOwn].filter(id => withComp.has(id));
-  console.log(`\nJämförbara produkter: ${comparable.length}`);
 }
 
 main().catch(console.error);
