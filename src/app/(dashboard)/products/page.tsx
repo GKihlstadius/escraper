@@ -48,6 +48,7 @@ export default function ProductsPage() {
   const [brandFilter, setBrandFilter] = useState<string>('alla');
   const [colorFilter, setColorFilter] = useState<string>('alla');
   const [stockFilter, setStockFilter] = useState<'alla' | 'i_lager' | 'slut'>('alla');
+  const [storeFilter, setStoreFilter] = useState<string>('alla');
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [page, setPage] = useState(1);
@@ -100,6 +101,23 @@ export default function ProductsPage() {
     return [...set].sort();
   }, [products]);
 
+  const stores = useMemo(() => {
+    const map = new Map<string, { name: string; isOwn: boolean }>();
+    products.forEach((p) =>
+      p.variants?.forEach((v) =>
+        v.prices?.forEach((pr) => {
+          if (pr.competitor && !map.has(pr.competitor.name)) {
+            map.set(pr.competitor.name, { name: pr.competitor.name, isOwn: pr.competitor.is_own_store });
+          }
+        })
+      )
+    );
+    return [...map.values()].sort((a, b) => {
+      if (a.isOwn !== b.isOwn) return a.isOwn ? -1 : 1;
+      return a.name.localeCompare(b.name, 'sv');
+    });
+  }, [products]);
+
   const filtered = products.filter((p) => {
     if (search) {
       const q = search.toLowerCase();
@@ -117,13 +135,17 @@ export default function ProductsPage() {
       if (stockFilter === 'i_lager' && !hasInStock) return false;
       if (stockFilter === 'slut' && hasInStock) return false;
     }
+    if (storeFilter !== 'alla') {
+      const hasStore = p.variants?.some((v) => v.prices?.some((pr) => pr.competitor?.name === storeFilter));
+      if (!hasStore) return false;
+    }
     return true;
   });
 
   // Reset page when filters change
   useEffect(() => {
     setPage(1);
-  }, [search, categoryGroup, subCategory, brandFilter, colorFilter, stockFilter]);
+  }, [search, categoryGroup, subCategory, brandFilter, colorFilter, stockFilter, storeFilter]);
 
   // Pagination
   const totalPages = Math.max(1, Math.ceil(filtered.length / ITEMS_PER_PAGE));
@@ -135,6 +157,7 @@ export default function ProductsPage() {
     brandFilter !== 'alla',
     colorFilter !== 'alla',
     stockFilter !== 'alla',
+    storeFilter !== 'alla',
     subCategory !== 'alla',
   ].filter(Boolean).length;
 
@@ -142,6 +165,7 @@ export default function ProductsPage() {
     setBrandFilter('alla');
     setColorFilter('alla');
     setStockFilter('alla');
+    setStoreFilter('alla');
     setSubCategory('alla');
     setCategoryGroup('alla');
     setSearch('');
@@ -258,6 +282,20 @@ export default function ProductsPage() {
                 <SelectItem value="alla">Alla</SelectItem>
                 <SelectItem value="i_lager">I lager</SelectItem>
                 <SelectItem value="slut">Slut i lager</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={storeFilter} onValueChange={(v) => v && setStoreFilter(v)}>
+              <SelectTrigger className="w-full sm:w-48 rounded-xl border-[#E5E7EB]">
+                <SelectValue placeholder="Butik" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="alla">Alla butiker</SelectItem>
+                {stores.map((store) => (
+                  <SelectItem key={store.name} value={store.name}>
+                    {store.name}{store.isOwn ? ' (egen)' : ''}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
 
