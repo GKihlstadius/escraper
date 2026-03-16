@@ -2,7 +2,7 @@
 
 const STROLLER_KEYWORDS = [
   'barnvagn', 'duovagn', 'sittvagn', 'joggingvagn', 'vagnspaket',
-  'liggvagn', 'syskonvagn',
+  'liggvagn', 'syskonvagn', 'resevagn', 'sulky',
 ];
 
 const CAR_SEAT_KEYWORDS = [
@@ -17,7 +17,7 @@ const BRAND_KEYWORDS = [
   'silver-cross', 'peg-perego', 'crescent', 'beemoo', 'kinderkraft',
   'lionelo', 'doona', 'baby-jogger', 'bebeconfort', 'mutsy',
   'inglesina', 'cam', 'kunert', 'anex', 'mima', 'icandy',
-  'silvercross', 'silvercross', 'odder',
+  'silvercross', 'odder', 'bumprider', 'ergobaby', 'diono',
 ];
 
 const PRODUCT_KEYWORDS = [...STROLLER_KEYWORDS, ...CAR_SEAT_KEYWORDS, ...BRAND_KEYWORDS];

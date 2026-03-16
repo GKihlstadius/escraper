@@ -22,12 +22,15 @@ const KNOWN_BRANDS = [
   'nuna', 'uppababy', 'maxi-cosi', 'joie', 'babyzen',
   'emmaljunga', 'elodie', 'silver cross', 'cam', 'peg perego',
   'hauck', 'chicco', 'besafe', 'axkid', 'recaro',
+  'crescent', 'beemoo', 'kinderkraft', 'lionelo', 'doona',
+  'baby jogger', 'inglesina', 'mutsy', 'mima', 'icandy',
+  'bumprider', 'ergobaby', 'diono', 'kunert', 'anex',
 ];
 
 // Category detection from product name/URL
 const CATEGORY_PATTERNS: Array<{ pattern: RegExp; category: ProductCategory }> = [
   { pattern: /duovagn|duo\s*vagn|complete.*vagn|vagn.*complete/i, category: 'duovagn' },
-  { pattern: /sittvagn|sitt\s*vagn|sulky|buggy/i, category: 'sittvagn' },
+  { pattern: /sittvagn|sitt\s*vagn|sulky|buggy|resevagn/i, category: 'sittvagn' },
   { pattern: /jogg(?:ing)?vagn/i, category: 'joggingvagn' },
   { pattern: /vagnspaket|barnvagnspaket|paket.*vagn/i, category: 'vagnspaket' },
   { pattern: /liggvagn|ligg\s*vagn/i, category: 'liggvagn' },
