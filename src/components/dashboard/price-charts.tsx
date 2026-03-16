@@ -21,15 +21,18 @@ export function ProductPriceComparison({
   competitors,
   prices,
   urls,
+  ownStoreIds,
 }: {
   products: ProductInfo[];
   competitors: CompetitorInfo[];
   prices: Record<string, Record<string, Record<string, number>>>;
   urls: Record<string, Record<string, string>>;
+  ownStoreIds?: string[];
 }) {
   const [selectedProductId, setSelectedProductId] = useState(products[0]?.id || '');
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
+  const ownIds = useMemo(() => new Set(ownStoreIds || competitors.filter(c => c.isOwn).map(c => c.id)), [ownStoreIds, competitors]);
 
   const filtered = useMemo(() => {
     if (!search) return products;
@@ -90,6 +93,46 @@ export function ProductPriceComparison({
     }
     return map;
   }, [activeCompetitors]);
+
+  // Price summary for selected product: own price vs cheapest competitor
+  const priceSummary = useMemo(() => {
+    const productPrices = prices[selectedProductId];
+    if (!productPrices) return null;
+
+    // Get the latest price for each competitor
+    let ownPrice: number | null = null;
+    let ownName = '';
+    let cheapestComp: number | null = null;
+    let cheapestName = '';
+
+    for (const comp of activeCompetitors) {
+      const dateMap = productPrices[comp.id];
+      if (!dateMap) continue;
+      const dates = Object.keys(dateMap).sort();
+      const latest = dates[dates.length - 1];
+      if (!latest) continue;
+      const price = dateMap[latest];
+
+      if (ownIds.has(comp.id)) {
+        if (ownPrice === null || price < ownPrice) {
+          ownPrice = price;
+          ownName = comp.name;
+        }
+      } else {
+        if (cheapestComp === null || price < cheapestComp) {
+          cheapestComp = price;
+          cheapestName = comp.name;
+        }
+      }
+    }
+
+    if (ownPrice === null || cheapestComp === null) return null;
+
+    const diff = ownPrice - cheapestComp;
+    const pct = ((diff / cheapestComp) * 100).toFixed(1);
+
+    return { ownPrice, ownName, cheapestComp, cheapestName, diff, pct };
+  }, [selectedProductId, prices, activeCompetitors, ownIds]);
 
   if (!products.length) {
     return (
@@ -232,6 +275,36 @@ export function ProductPriceComparison({
       ) : (
         <div className="h-[280px] flex items-center justify-center text-sm text-zinc-400">
           Ingen prisdata för vald produkt
+        </div>
+      )}
+
+      {/* Price summary */}
+      {priceSummary && (
+        <div className="mt-4 flex flex-wrap gap-3 text-xs">
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-violet-50 border border-violet-100">
+            <span className="text-violet-500">Vårt pris</span>
+            <span className="font-semibold text-violet-700 tabular-nums">
+              {Math.round(priceSummary.ownPrice).toLocaleString()} kr
+            </span>
+            <span className="text-violet-400">({priceSummary.ownName})</span>
+          </div>
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-50 border border-zinc-100">
+            <span className="text-zinc-400">Billigast konkurrent</span>
+            <span className="font-semibold text-zinc-700 tabular-nums">
+              {Math.round(priceSummary.cheapestComp).toLocaleString()} kr
+            </span>
+            <span className="text-zinc-400">({priceSummary.cheapestName})</span>
+          </div>
+          <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${
+            priceSummary.diff <= 0
+              ? 'bg-emerald-50 border-emerald-100 text-emerald-700'
+              : 'bg-red-50 border-red-100 text-red-700'
+          }`}>
+            <span>{priceSummary.diff <= 0 ? 'Vi är billigare' : 'Vi är dyrare'}</span>
+            <span className="font-semibold tabular-nums">
+              {priceSummary.diff <= 0 ? '' : '+'}{Math.round(priceSummary.diff).toLocaleString()} kr ({priceSummary.pct}%)
+            </span>
+          </div>
         </div>
       )}
     </div>
