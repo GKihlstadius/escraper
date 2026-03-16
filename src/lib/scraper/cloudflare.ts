@@ -127,7 +127,9 @@ export async function renderPage(url: string): Promise<string> {
     if (hasProductData) return html;
 
     // Page might need JS rendering — try CF Browser Rendering
-    const cfHtml = await renderWithCF(url);
+    // If the page is an SPA shell (has tws- web components), wait for JSON-LD injection
+    const needsWait = html.includes('tws-') || html.includes('textalk');
+    const cfHtml = await renderWithCF(url, needsWait ? 'script[type="application/ld+json"]' : undefined);
     return cfHtml || html; // Fall back to original HTML if CF fails
   } catch {
     // Direct fetch failed, try CF
@@ -140,7 +142,7 @@ export async function renderPage(url: string): Promise<string> {
 let lastCFRequest = 0;
 const CF_MIN_DELAY = 2000; // 2s between CF requests to avoid rate limiting
 
-async function renderWithCF(url: string): Promise<string | null> {
+async function renderWithCF(url: string, waitFor?: string): Promise<string | null> {
   const accountId = process.env.CF_ACCOUNT_ID;
   const apiToken = process.env.CF_API_TOKEN;
 
@@ -161,7 +163,10 @@ async function renderWithCF(url: string): Promise<string | null> {
         'Authorization': `Bearer ${apiToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({
+        url,
+        ...(waitFor && { waitFor }),
+      }),
       signal: AbortSignal.timeout(30_000),
     });
 

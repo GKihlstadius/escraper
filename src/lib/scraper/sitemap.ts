@@ -304,12 +304,8 @@ export async function discoverFromCategoryPages(
               return last.length > 10 && last.includes('-');
             }
 
-            // Competitors: must be under a relevant category
-            if (segs.length < 2) return false;
-            const cat = segs[0];
-            if (!['barnvagnar', 'bilbarnstolar', 'bilstolar', 'babyskydd'].includes(cat)) return false;
-            const last = segs[segs.length - 1];
-            return last.length > 15 && last.includes('-');
+            // Competitors: use the same isProductUrl logic
+            return isProductUrl(fullUrl, false);
           } catch {
             return false;
           }

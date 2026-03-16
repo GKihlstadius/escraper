@@ -116,6 +116,9 @@ export async function scrapeCompetitor(competitorId: string, timeBudgetMs?: numb
         '/bilbarnstolar/framatvanda-bilbarnstolar', '/bilbarnstolar/balteskuddar',
         // My Baby category pages
         '/barnvagnar', '/bilstolar', '/babyskydd',
+        // Babyland flat category pages
+        '/kombi-och-duovagnar', '/sittvagnar-1', '/syskonvagnar',
+        '/sportvagnar', '/resevagnar',
       ];
       urls = await discoverFromCategoryPages(competitor.url.replace(/\/$/, ''), categoryPaths, urlLimit, isOwn);
     }
