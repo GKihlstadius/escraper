@@ -1,16 +1,9 @@
 /**
  * Re-match orphaned products across stores.
  *
- * Problem: Products scraped from own stores and competitors often end up as
- * separate product records because name normalization differs between stores.
- *
- * This script:
- * 1. Finds all products with prices
- * 2. Groups them by brand + model key
- * 3. For products that should be the same, merges them:
- *    - Keeps the own-store product as the canonical one
- *    - Moves competitor prices to the canonical product
- *    - Deactivates the duplicate
+ * Phase 1: Fix brands (unknown → detected, normalize aliases)
+ * Phase 2: Merge same-model products across stores (own + competitor)
+ * Phase 3: Merge same-model-different-color products into variants
  */
 
 import { createClient } from '@supabase/supabase-js';
@@ -22,10 +15,9 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-// --- Normalization helpers (mirrors parser.ts but improved) ---
+// --- Normalization ---
 
 const COLOR_WORDS = new Set([
-  // English
   'black', 'white', 'grey', 'gray', 'navy', 'blue', 'red', 'green', 'beige',
   'brown', 'pink', 'yellow', 'purple', 'orange', 'silver', 'cream', 'ivory',
   'pearl', 'graphite', 'coral', 'peach', 'lavender', 'rose', 'blush',
@@ -33,37 +25,43 @@ const COLOR_WORDS = new Set([
   'sky', 'steel', 'stormy', 'forest', 'pine', 'sage', 'olive', 'misty',
   'cognac', 'espresso', 'chocolate', 'mustard', 'lemon', 'dune', 'desert',
   'sand', 'taupe', 'khaki', 'burgundy', 'cherry',
-  // Swedish
   'svart', 'vit', 'grå', 'blå', 'röd', 'grön', 'brun', 'rosa', 'gul', 'lila',
   'marinblå', 'mörkblå',
-  // Product-specific color names (common in baby products)
   'sepia', 'mirage', 'moon', 'fern', 'cocoa', 'cedar', 'hazel', 'truffle',
   'twillic', 'sandy', 'space', 'dusty', 'ocean', 'arctic', 'mineral',
   'platinum', 'leaf', 'cozy', 'nautical', 'magic', 'eclipse', 'thunder',
-  'rosegold', 'stone', 'onyx', 'almond', 'glacier', 'storm',
-  'everett', 'alaska', 'fossil', 'autumn', 'spring', 'summer', 'winter',
-  'heritage', 'classic', 'modern', 'fresh', 'essential', 'authentic',
-  'cab', 'elegance', 'cementgrå', 'khakigrön',
+  'rosegold', 'stone', 'onyx', 'almond', 'glacier', 'storm', 'fossil',
+  'everett', 'alaska', 'autumn', 'heritage', 'elegance', 'cosmos',
+  'cementgrå', 'khakigrön', 'vanilla', 'brilliant', 'teak', 'harbor',
+  'carbon', 'night', 'warm', 'caramel', 'soft', 'breeze', 'fog',
+  'candy', 'canvas', 'sapphire', 'henley', 'expedition', 'orkney',
+  'caviar', 'moonlight', 'classic', 'mystic', 'mocha', 'latte', 'coffee',
+  'granite', 'nordic', 'bloom', 'driftwood', 'coastal', 'costal',
+  'beachgrass', 'mist', 'nitro', 'tinted', 'sahara', 'mint',
+  'chalk', 'mercury', 'cobalt', 'dusk', 'dawn', 'meadow',
+  'essential', 'authentic', 'basic', 'fresh', 'cab', 'pure',
+  'melange', 'mélange', 'mesh',
 ]);
 
 const NOISE_WORDS = new Set([
-  'inkl', 'inklusive', 'med', 'plus', 'och', 'för', 'till', 'av', 'den', 'det', 'nya',
-  'onesize', 'one-size',
+  'inkl', 'inkl.', 'inklusive', 'med', 'plus', 'och', 'för', 'till', 'av',
+  'den', 'det', 'nya', 'onesize', 'one-size',
   '2022', '2023', '2024', '2025', '2026',
   'bilbarnstol', 'bilstol', 'bälteskudde', 'bältesstol',
   'barnvagn', 'duovagn', 'sittvagn', 'syskonvagn', 'joggingvagn',
   'liggvagn', 'sulky', 'buggy', 'kombivagn', 'barnvagnspaket',
-  'vagnspaket', 'paket', 'komplett', 'set',
+  'vagnspaket', 'paket', 'komplett', 'set', 'resevagn',
   'liggdel', 'sittdel', 'sittbas', 'chassi', 'chassis',
-  'babyskydd', 'i-size', 'r129', 'r44',
+  'babyskydd', 'i-size', 'r129', 'r44', 'isofix',
   'stroller', 'pushchair', 'pram', 'car', 'seat',
-  'outdoor', 'air', 'ergo', 'flat',
+  'outdoor', 'air', 'ergo', 'flat', 'chrome', 'kg', '0-13',
+  'style', 'lux', 'pro',
 ]);
 
 const BRAND_ALIASES: Record<string, string[]> = {
-  'britax': ['britax', 'britax römer', 'britax romer'],
+  'britax': ['britax', 'britax römer', 'britax romer', 'römer'],
   'maxi-cosi': ['maxi-cosi', 'maxicosi', 'maxi cosi'],
-  'stokke': ['stokke'],
+  'stokke': ['stokke', 'stokke®'],
   'elodie': ['elodie', 'elodie details'],
   'cybex': ['cybex'],
   'bugaboo': ['bugaboo'],
@@ -86,7 +84,6 @@ const BRAND_ALIASES: Record<string, string[]> = {
   'doona': ['doona'],
   'babyzen': ['babyzen'],
   'peg perego': ['peg perego', 'pegperego'],
-  'cam': ['cam'],
   'chicco': ['chicco'],
   'inglesina': ['inglesina'],
   'mutsy': ['mutsy'],
@@ -96,7 +93,21 @@ const BRAND_ALIASES: Record<string, string[]> = {
   'ergobaby': ['ergobaby'],
   'diono': ['diono'],
   'recaro': ['recaro'],
+  'cam': ['cam'],
+  'abc design': ['abc design'],
+  'done by deer': ['done by deer'],
 };
+
+const KNOWN_BRANDS = [
+  'bugaboo', 'cybex', 'thule', 'britax', 'stokke', 'joolz',
+  'nuna', 'uppababy', 'maxi-cosi', 'joie', 'babyzen',
+  'emmaljunga', 'elodie', 'silver cross', 'cam', 'peg perego',
+  'hauck', 'chicco', 'besafe', 'axkid', 'recaro',
+  'crescent', 'beemoo', 'kinderkraft', 'lionelo', 'doona',
+  'baby jogger', 'inglesina', 'mutsy', 'mima', 'icandy',
+  'bumprider', 'ergobaby', 'diono', 'kunert', 'anex',
+  'done by deer', 'abc design',
+];
 
 function normalizeBrand(brand: string): string {
   const lower = brand.toLowerCase().replace(/[®™]+/g, '').trim();
@@ -110,21 +121,31 @@ function normalizeBrand(brand: string): string {
   return lower.replace(/[\s-]+/g, '');
 }
 
+function detectBrand(name: string): string | null {
+  const lower = name.toLowerCase();
+  for (const brand of KNOWN_BRANDS) {
+    if (lower.includes(brand)) {
+      return brand.split(' ').map(w => w[0].toUpperCase() + w.slice(1)).join(' ');
+    }
+  }
+  return null;
+}
+
 function extractModelKey(name: string, brand: string): string {
   let text = name.toLowerCase();
-
-  // Remove everything in parentheses (often colors/frame variants)
   text = text.replace(/\([^)]*\)/g, '');
-
-  // Remove punctuation except hyphens
   text = text.replace(/[^\w\såäöé-]/g, ' ').replace(/\s+/g, ' ').trim();
 
   const words = text.split(/\s+/);
+  const brandNorm = normalizeBrand(brand);
+  const brandWords = new Set(brandNorm.split(/[\s-]+/));
 
-  // Remove brand words, color words, noise words, and short/numeric tokens
-  const brandWords = new Set(normalizeBrand(brand).split(/[\s-]+/));
+  // Single letters that are significant model identifiers (e.g., Cloud T, Sirona G, Doona X)
+  const MODEL_LETTERS = new Set(['t', 'g', 'x', 'i', 's', 'z', 'r', 'm', 'e']);
+
   const significant = words.filter(w => {
-    if (w.length <= 1) return false;
+    if (w.length <= 0) return false;
+    if (w.length === 1 && !MODEL_LETTERS.has(w)) return false;
     if (brandWords.has(w)) return false;
     if (COLOR_WORDS.has(w)) return false;
     if (NOISE_WORDS.has(w)) return false;
@@ -135,7 +156,6 @@ function extractModelKey(name: string, brand: string): string {
   return significant.join(' ').trim();
 }
 
-// Product type detection for compatibility
 const ACCESSORY_KEYWORDS = [
   'liggdel', 'sittdel', 'sittbas', 'chassi', 'chassis', 'adapter',
   'regnskydd', 'sufflett', 'mugghållare', 'fotsack', 'insektsnät',
@@ -144,10 +164,14 @@ const ACCESSORY_KEYWORDS = [
   'raincover', 'syskonsits', 'extrasits', 'snack tray', 'barsele',
   'cabin bag', 'travel bag', 'resebag', 'bilstolsbas', 'vindskydd',
   'bas till', 'base t', 'base m', 'base z', 'i-base', 'basefix',
-  'familyfix', 'isofix', 'solsuflett',
+  'familyfix', 'solsuflett', 'sommaröverdrag', 'överdrag',
+  'barnvagnsleksak', 'barnvagnshänge', 'barnvagnsringar', 'organiser',
+  'organizer', 'babynest', 'nattlampa', 'baby monitor', 'babysitter',
+  'training tower', 'balanscykel', 'trehjuling', 'krokar',
+  'barnvagnsgardin',
 ];
 
-const BUNDLE_KEYWORDS = ['paket', 'komplett', 'bundle', 'barnvagnspaket', 'vagnspaket', 'kombivagn'];
+const BUNDLE_KEYWORDS = ['paket', 'komplett', 'bundle', 'barnvagnspaket', 'vagnspaket', 'kombivagn', 'travelsystem', 'trio'];
 
 function getProductType(name: string): 'accessory' | 'bundle' | 'product' {
   const lower = name.toLowerCase();
@@ -156,7 +180,7 @@ function getProductType(name: string): 'accessory' | 'bundle' | 'product' {
   return 'product';
 }
 
-// Main types
+// Types
 interface Product {
   id: string;
   name: string;
@@ -164,27 +188,9 @@ interface Product {
   is_active: boolean;
   normalized_name: string;
 }
-
-interface Variant {
-  id: string;
-  product_id: string;
-  color: string | null;
-  variant_name: string;
-  image: string | null;
-}
-
-interface Price {
-  id: string;
-  variant_id: string;
-  competitor_id: string;
-  price: number;
-}
-
-interface Competitor {
-  id: string;
-  name: string;
-  is_own_store: boolean;
-}
+interface Variant { id: string; product_id: string; color: string | null; variant_name: string; image: string | null; }
+interface Price { id: string; variant_id: string; competitor_id: string; price: number; }
+interface Competitor { id: string; name: string; is_own_store: boolean; }
 
 async function fetchAll<T>(table: string, select: string): Promise<T[]> {
   const all: T[] = [];
@@ -201,8 +207,9 @@ async function fetchAll<T>(table: string, select: string): Promise<T[]> {
 }
 
 async function main() {
-  console.log('Loading data...');
+  const dryRun = process.argv.includes('--dry-run');
 
+  console.log('Loading data...');
   const products = await fetchAll<Product>('products', 'id, name, brand, is_active, normalized_name');
   const variants = await fetchAll<Variant>('product_variants', 'id, product_id, color, variant_name, image');
   const prices = await fetchAll<Price>('product_prices', 'id, variant_id, competitor_id, price');
@@ -211,13 +218,11 @@ async function main() {
   const compMap = Object.fromEntries(competitors.map(c => [c.id, c]));
   const ownStoreIds = new Set(competitors.filter(c => c.is_own_store).map(c => c.id));
 
-  console.log(`Loaded: ${products.length} products, ${variants.length} variants, ${prices.length} prices`);
+  console.log(`Loaded: ${products.length} products, ${variants.length} variants, ${prices.length} prices\n`);
 
   // Build indexes
   const variantsByProduct = new Map<string, Variant[]>();
-  const variantMap = new Map<string, Variant>();
   for (const v of variants) {
-    variantMap.set(v.id, v);
     if (!variantsByProduct.has(v.product_id)) variantsByProduct.set(v.product_id, []);
     variantsByProduct.get(v.product_id)!.push(v);
   }
@@ -228,22 +233,65 @@ async function main() {
     pricesByVariant.get(p.variant_id)!.push(p);
   }
 
-  // Classify products by which competitors have prices
   const productCompetitors = new Map<string, Set<string>>();
   for (const v of variants) {
-    const vPrices = pricesByVariant.get(v.id) || [];
-    for (const p of vPrices) {
+    for (const p of pricesByVariant.get(v.id) || []) {
       if (!productCompetitors.has(v.product_id)) productCompetitors.set(v.product_id, new Set());
       productCompetitors.get(v.product_id)!.add(p.competitor_id);
     }
   }
 
-  // Group ALL products (active and inactive with prices) by normalized brand + model key
-  const groups = new Map<string, Product[]>();
+  // ===== PHASE 1: FIX BRANDS =====
+  console.log('═══ PHASE 1: FIX BRANDS ═══\n');
 
+  let brandsFixed = 0;
+  for (const p of products) {
+    if (p.brand && p.brand !== 'Okänt') {
+      // Normalize existing brand
+      const normalized = normalizeBrand(p.brand);
+      const canonical = Object.entries(BRAND_ALIASES).find(([, aliases]) =>
+        aliases.includes(normalized)
+      )?.[0];
+
+      if (canonical) {
+        const properName = canonical.split(/[\s-]+/).map(w => w[0].toUpperCase() + w.slice(1)).join(canonical.includes('-') ? '-' : ' ');
+        if (p.brand !== properName && p.brand.toLowerCase() !== canonical) {
+          // Only fix major mismatches (e.g., "Britax Römer" stays, but "Stokke®" → "Stokke")
+          if (p.brand.replace(/[®™]/g, '').trim().toLowerCase() !== properName.toLowerCase()) {
+            continue; // Keep as-is for minor variations
+          }
+          console.log(`  FIX: "${p.brand}" → "${properName}" (${p.name})`);
+          if (!dryRun) {
+            await supabase.from('products').update({ brand: properName }).eq('id', p.id);
+          }
+          p.brand = properName;
+          brandsFixed++;
+        }
+      }
+      continue;
+    }
+
+    // Try to detect brand from product name
+    const detected = detectBrand(p.name);
+    if (detected) {
+      console.log(`  DETECT: "${p.name}" → brand: ${detected}`);
+      if (!dryRun) {
+        await supabase.from('products').update({ brand: detected }).eq('id', p.id);
+      }
+      p.brand = detected;
+      brandsFixed++;
+    }
+  }
+  console.log(`\nBrands fixed: ${brandsFixed}\n`);
+
+  // ===== PHASE 2: MERGE CROSS-STORE DUPLICATES =====
+  console.log('═══ PHASE 2: MERGE CROSS-STORE DUPLICATES ═══\n');
+
+  // Re-group with fixed brands
+  const groups = new Map<string, Product[]>();
   for (const p of products) {
     if (!p.brand || !p.name) continue;
-    if (!productCompetitors.has(p.id)) continue; // skip products without any prices
+    if (!productCompetitors.has(p.id)) continue;
 
     const brand = normalizeBrand(p.brand);
     const model = extractModelKey(p.name, p.brand);
@@ -256,23 +304,31 @@ async function main() {
     groups.get(key)!.push(p);
   }
 
-  // Find groups with multiple products (potential duplicates to merge)
+  const getAvgPrice = (p: Product): number => {
+    const vars = variantsByProduct.get(p.id) || [];
+    const allPrices = vars.flatMap(v => (pricesByVariant.get(v.id) || []).map(pp => pp.price));
+    if (allPrices.length === 0) return 0;
+    return allPrices.reduce((a, b) => a + b, 0) / allPrices.length;
+  };
+
+  const getPriceCount = (p: Product): number => {
+    const vars = variantsByProduct.get(p.id) || [];
+    return vars.reduce((sum, v) => sum + (pricesByVariant.get(v.id)?.length || 0), 0);
+  };
+
   let mergeCount = 0;
   let pricesMoved = 0;
   let deactivated = 0;
-  const merges: Array<{ canonical: Product; duplicate: Product; key: string }> = [];
 
   for (const [key, groupProducts] of groups) {
     if (groupProducts.length < 2) continue;
 
-    // Separate into own-store and competitor-only products
     const hasOwn: Product[] = [];
     const compOnly: Product[] = [];
 
     for (const p of groupProducts) {
       const comps = productCompetitors.get(p.id) || new Set();
-      const hasOwnPrice = [...comps].some(c => ownStoreIds.has(c));
-      if (hasOwnPrice) {
+      if ([...comps].some(c => ownStoreIds.has(c))) {
         hasOwn.push(p);
       } else {
         compOnly.push(p);
@@ -281,27 +337,11 @@ async function main() {
 
     if (hasOwn.length === 0 || compOnly.length === 0) continue;
 
-    // Pick canonical: own-store product with most prices
-    const getAvgPrice = (p: Product): number => {
-      const vars = variantsByProduct.get(p.id) || [];
-      const allPrices = vars.flatMap(v => (pricesByVariant.get(v.id) || []).map(pp => pp.price));
-      if (allPrices.length === 0) return 0;
-      return allPrices.reduce((a, b) => a + b, 0) / allPrices.length;
-    };
-
-    const getPriceCount = (p: Product): number => {
-      const vars = variantsByProduct.get(p.id) || [];
-      return vars.reduce((sum, v) => sum + (pricesByVariant.get(v.id)?.length || 0), 0);
-    };
-
     const canonical = hasOwn.sort((a, b) => getPriceCount(b) - getPriceCount(a))[0];
     const canonicalAvg = getAvgPrice(canonical);
 
-    // Merge competitor-only products into canonical
     for (const dup of compOnly) {
       const dupAvg = getAvgPrice(dup);
-
-      // Price sanity check
       if (canonicalAvg > 0 && dupAvg > 0) {
         const ratio = dupAvg / canonicalAvg;
         if (ratio > 2.5 || ratio < 0.3) {
@@ -310,99 +350,143 @@ async function main() {
         }
       }
 
-      merges.push({ canonical, duplicate: dup, key });
-    }
-  }
-
-  console.log(`\nFound ${merges.length} products to merge\n`);
-
-  const dryRun = process.argv.includes('--dry-run');
-
-  for (const merge of merges) {
-    const { canonical: canon, duplicate: dup } = merge;
-    const dupVars = variantsByProduct.get(dup.id) || [];
-    const dupPriceCount = dupVars.reduce((sum, v) => sum + (pricesByVariant.get(v.id)?.length || 0), 0);
-
-    const dupComps = new Set<string>();
-    for (const v of dupVars) {
-      for (const p of pricesByVariant.get(v.id) || []) {
-        dupComps.add(compMap[p.competitor_id]?.name || p.competitor_id);
-      }
-    }
-
-    console.log(`MERGE: "${dup.name}" (${[...dupComps].join(', ')}, ${dupPriceCount} prices)`);
-    console.log(`  INTO: "${canon.name}" (canonical)`);
-
-    if (dryRun) continue;
-
-    // Execute merge
-    for (const dupVar of dupVars) {
-      const dupPrices = pricesByVariant.get(dupVar.id) || [];
-      if (dupPrices.length === 0) continue;
-
-      // Find or create matching variant in canonical product
-      const canonVars = variantsByProduct.get(canon.id) || [];
-      let targetVar = canonVars.find(v => v.color === dupVar.color);
-
-      if (!targetVar) {
-        const { data: newVar } = await supabase
-          .from('product_variants')
-          .insert({
-            product_id: canon.id,
-            color: dupVar.color,
-            variant_name: dupVar.variant_name,
-            image: dupVar.image,
-          })
-          .select()
-          .single();
-
-        if (newVar) {
-          targetVar = newVar as Variant;
-          if (!variantsByProduct.has(canon.id)) variantsByProduct.set(canon.id, []);
-          variantsByProduct.get(canon.id)!.push(targetVar);
+      const dupVars = variantsByProduct.get(dup.id) || [];
+      const dupPriceCount = getPriceCount(dup);
+      const dupComps = new Set<string>();
+      for (const v of dupVars) {
+        for (const p of pricesByVariant.get(v.id) || []) {
+          dupComps.add(compMap[p.competitor_id]?.name || '?');
         }
       }
 
-      if (!targetVar) continue;
+      console.log(`  MERGE: "${dup.name}" (${[...dupComps].join(', ')}, ${dupPriceCount} prices) → "${canonical.name}"`);
 
-      // Move prices to canonical variant
-      const priceIds = dupPrices.map(p => p.id);
-      // Process in batches (Supabase has limits on IN clauses)
-      for (let i = 0; i < priceIds.length; i += 100) {
-        const batch = priceIds.slice(i, i + 100);
-        const { error } = await supabase
-          .from('product_prices')
-          .update({ variant_id: targetVar.id })
-          .in('id', batch);
+      if (!dryRun) {
+        for (const dupVar of dupVars) {
+          const dupPrices = pricesByVariant.get(dupVar.id) || [];
+          if (dupPrices.length === 0) continue;
 
-        if (error) {
-          console.log(`  ERROR moving prices: ${error.message}`);
-        } else {
-          pricesMoved += batch.length;
+          const canonVars = variantsByProduct.get(canonical.id) || [];
+          let targetVar = canonVars.find(v => v.color === dupVar.color);
+          if (!targetVar) {
+            const { data: newVar } = await supabase
+              .from('product_variants')
+              .insert({ product_id: canonical.id, color: dupVar.color, variant_name: dupVar.variant_name, image: dupVar.image })
+              .select().single();
+            if (newVar) {
+              targetVar = newVar as Variant;
+              if (!variantsByProduct.has(canonical.id)) variantsByProduct.set(canonical.id, []);
+              variantsByProduct.get(canonical.id)!.push(targetVar);
+            }
+          }
+          if (!targetVar) continue;
+
+          for (let i = 0; i < dupPrices.length; i += 100) {
+            const batch = dupPrices.slice(i, i + 100).map(p => p.id);
+            await supabase.from('product_prices').update({ variant_id: targetVar.id }).in('id', batch);
+            pricesMoved += batch.length;
+          }
         }
+        await supabase.from('products').update({ is_active: false }).eq('id', dup.id);
+        deactivated++;
       }
+      mergeCount++;
     }
+  }
+  console.log(`\nCross-store merges: ${mergeCount}, prices moved: ${pricesMoved}, deactivated: ${deactivated}\n`);
 
-    // Deactivate duplicate
-    await supabase
-      .from('products')
-      .update({ is_active: false })
-      .eq('id', dup.id);
+  // ===== PHASE 3: MERGE COLOR VARIANTS =====
+  console.log('═══ PHASE 3: MERGE COLOR VARIANTS ═══\n');
 
-    deactivated++;
-    mergeCount++;
+  // Re-group ALL products (since we may have merged some)
+  // This time, group products that are the same model but different colors
+  // and are already within the SAME store side (both own-store or both competitor)
+  const colorGroups = new Map<string, Product[]>();
+  for (const p of products) {
+    if (!p.brand || !p.name || !p.is_active) continue;
+    if (!productCompetitors.has(p.id)) continue;
+
+    const brand = normalizeBrand(p.brand);
+    const model = extractModelKey(p.name, p.brand);
+    if (!model || model.length < 2) continue;
+    const type = getProductType(p.name);
+    const key = `${brand}|${model}|${type}`;
+
+    if (!colorGroups.has(key)) colorGroups.set(key, []);
+    colorGroups.get(key)!.push(p);
   }
 
-  console.log(`\n═══════════════════════════════════════`);
-  console.log(`  RESULTS${dryRun ? ' (DRY RUN)' : ''}`);
-  console.log(`═══════════════════════════════════════`);
-  console.log(`  Products merged: ${mergeCount}`);
-  console.log(`  Prices moved: ${pricesMoved}`);
-  console.log(`  Duplicates deactivated: ${deactivated}`);
+  let colorMerges = 0;
+  let colorPricesMoved = 0;
 
-  if (dryRun) {
-    console.log(`\nRun without --dry-run to execute merges`);
+  for (const [key, groupProducts] of colorGroups) {
+    if (groupProducts.length < 2) continue;
+
+    // All products in this group should be the same model - merge into one
+    // Pick the one with most prices as canonical
+    const sorted = groupProducts.sort((a, b) => getPriceCount(b) - getPriceCount(a));
+    const canonical = sorted[0];
+    const canonicalAvg = getAvgPrice(canonical);
+
+    for (let i = 1; i < sorted.length; i++) {
+      const dup = sorted[i];
+
+      // Price sanity check
+      const dupAvg = getAvgPrice(dup);
+      if (canonicalAvg > 0 && dupAvg > 0) {
+        const ratio = dupAvg / canonicalAvg;
+        if (ratio > 2.5 || ratio < 0.3) continue;
+      }
+
+      const dupVars = variantsByProduct.get(dup.id) || [];
+      const dupPriceCount = getPriceCount(dup);
+      if (dupPriceCount === 0) continue;
+
+      console.log(`  COLOR MERGE: "${dup.name}" (${dupPriceCount} prices) → "${canonical.name}"`);
+
+      if (!dryRun) {
+        for (const dupVar of dupVars) {
+          const dupPrices = pricesByVariant.get(dupVar.id) || [];
+          if (dupPrices.length === 0) continue;
+
+          const canonVars = variantsByProduct.get(canonical.id) || [];
+          let targetVar = canonVars.find(v => v.color === dupVar.color);
+          if (!targetVar) {
+            const { data: newVar } = await supabase
+              .from('product_variants')
+              .insert({ product_id: canonical.id, color: dupVar.color, variant_name: dupVar.variant_name, image: dupVar.image })
+              .select().single();
+            if (newVar) {
+              targetVar = newVar as Variant;
+              if (!variantsByProduct.has(canonical.id)) variantsByProduct.set(canonical.id, []);
+              variantsByProduct.get(canonical.id)!.push(targetVar);
+            }
+          }
+          if (!targetVar) continue;
+
+          for (let i2 = 0; i2 < dupPrices.length; i2 += 100) {
+            const batch = dupPrices.slice(i2, i2 + 100).map(p => p.id);
+            await supabase.from('product_prices').update({ variant_id: targetVar.id }).in('id', batch);
+            colorPricesMoved += batch.length;
+          }
+        }
+        await supabase.from('products').update({ is_active: false }).eq('id', dup.id);
+      }
+      colorMerges++;
+    }
   }
+  console.log(`\nColor merges: ${colorMerges}, prices moved: ${colorPricesMoved}\n`);
+
+  // Summary
+  console.log('═══════════════════════════════════════');
+  console.log(`  TOTAL RESULTS${dryRun ? ' (DRY RUN)' : ''}`);
+  console.log('═══════════════════════════════════════');
+  console.log(`  Brands fixed: ${brandsFixed}`);
+  console.log(`  Cross-store merges: ${mergeCount}`);
+  console.log(`  Color variant merges: ${colorMerges}`);
+  console.log(`  Total prices moved: ${pricesMoved + colorPricesMoved}`);
+  console.log(`  Total deactivated: ${deactivated + colorMerges}`);
+  if (dryRun) console.log('\nRun without --dry-run to execute');
 }
 
 main().catch(console.error);

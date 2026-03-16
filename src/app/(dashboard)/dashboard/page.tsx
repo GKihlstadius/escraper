@@ -30,12 +30,20 @@ export default async function DashboardPage() {
   const ownStoreIds = new Set(competitors.filter(c => c.is_own_store).map(c => c.id));
   const variantToProduct = new Map(variants.map(v => [v.id, v.product_id]));
 
-  // ── All prices ──
-  const { data: allPrices } = await supabase
-    .from('product_prices')
-    .select('variant_id, competitor_id, price, scraped_at, url')
-    .order('scraped_at', { ascending: true });
-  const prices = allPrices || [];
+  // ── All prices (paginated — Supabase defaults to 1000 rows) ──
+  const prices: Array<{ variant_id: string; competitor_id: string; price: number; scraped_at: string; url: string | null }> = [];
+  let offset = 0;
+  while (true) {
+    const { data: batch } = await supabase
+      .from('product_prices')
+      .select('variant_id, competitor_id, price, scraped_at, url')
+      .order('scraped_at', { ascending: true })
+      .range(offset, offset + 999);
+    if (!batch || batch.length === 0) break;
+    prices.push(...batch);
+    if (batch.length < 1000) break;
+    offset += 1000;
+  }
 
   // ── Comparable products count (has own + competitor prices) ──
   const productsWithOwn = new Set<string>();

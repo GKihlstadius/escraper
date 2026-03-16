@@ -314,12 +314,17 @@ export function extractModelKey(name: string, brand?: string): string {
   // Split into words
   let words = text.split(/\s+/);
 
-  // Remove noise words
-  words = words.filter(w =>
-    w.length > 1 &&
-    !MODEL_STRIP_WORDS.includes(w) &&
-    !/^\d{1,2}$/.test(w) // remove lone numbers like "2" or "3"
-  );
+  // Single letters that are significant model identifiers (e.g., Cloud T, Sirona G, Doona X)
+  const modelLetters = new Set(['t', 'g', 'x', 'i', 's', 'z', 'r', 'm', 'e']);
+
+  // Remove noise words but keep single model letters
+  words = words.filter(w => {
+    if (w.length === 0) return false;
+    if (w.length === 1 && !modelLetters.has(w)) return false;
+    if (MODEL_STRIP_WORDS.includes(w)) return false;
+    if (/^\d{1,2}$/.test(w)) return false;
+    return true;
+  });
 
   // Detect brand from words or use provided brand
   const detectedBrand = (brand || detectBrand(name)).toLowerCase().replace(/\s+/g, '-');
@@ -329,8 +334,7 @@ export function extractModelKey(name: string, brand?: string): string {
   words = words.filter(w => !brandWords.includes(w));
 
   // Take the first 2-4 significant model words
-  // These are the words that identify the model (e.g., "fox 5", "fame", "sirona t", "izi twist")
-  const modelWords = words.filter(w => w.length >= 2).slice(0, 4);
+  const modelWords = words.filter(w => w.length >= 1).slice(0, 4);
 
   // Combine brand + model words
   const key = [detectedBrand, ...modelWords].join(' ').trim();
