@@ -41,7 +41,7 @@ export default async function RecommendationsPage() {
   const ownStores = competitors.filter(c => c.is_own_store);
   const ownStoreIds = new Set(ownStores.map(c => c.id));
 
-  // Get latest prices - only from last 30 days, with scraped_at for freshness
+  // Get latest prices - only from last 30 days
   let allPrices: { variant_id: string; competitor_id: string; price: number; url: string | null; scraped_at: string }[] = [];
   let offset = 0;
   while (true) {
@@ -57,27 +57,37 @@ export default async function RecommendationsPage() {
     if (data.length < 1000) break;
   }
 
-  // Keep only latest price per variant+competitor
-  const latestPrices = new Map<string, { price: number; url: string | null; scraped_at: string }>();
+  // Keep only latest price per variant+competitor, grouped by variant_id
+  const latestByKey = new Map<string, { price: number; url: string | null; scraped_at: string }>();
   for (const p of allPrices) {
     const key = `${p.variant_id}:${p.competitor_id}`;
-    if (!latestPrices.has(key)) {
-      latestPrices.set(key, { price: p.price, url: p.url, scraped_at: p.scraped_at });
+    if (!latestByKey.has(key)) {
+      latestByKey.set(key, { price: p.price, url: p.url, scraped_at: p.scraped_at });
     }
   }
 
-  // Build price diffs: for each product, compare own price vs each competitor
+  // Group by variant_id for O(1) lookup
+  const pricesByVariant = new Map<string, Map<string, { price: number; url: string | null; scraped_at: string }>>();
+  for (const [key, entry] of latestByKey) {
+    const [variantId, compId] = key.split(':');
+    if (!pricesByVariant.has(variantId)) pricesByVariant.set(variantId, new Map());
+    pricesByVariant.get(variantId)!.set(compId, entry);
+  }
+
+  // Build price diffs
   const diffs: PriceDiff[] = [];
 
   for (const variant of variants) {
     const product = productMap.get(variant.product_id);
     if (!product) continue;
 
+    const variantPrices = pricesByVariant.get(variant.id);
+    if (!variantPrices) continue;
+
     // Get own store prices for this variant
     const ownPrices: { storeName: string; price: number }[] = [];
     for (const ownStore of ownStores) {
-      const key = `${variant.id}:${ownStore.id}`;
-      const entry = latestPrices.get(key);
+      const entry = variantPrices.get(ownStore.id);
       if (entry && entry.price > 0) {
         ownPrices.push({ storeName: ownStore.name, price: entry.price });
       }
@@ -85,18 +95,16 @@ export default async function RecommendationsPage() {
 
     if (ownPrices.length === 0) continue;
 
-    // Compare against each competitor
-    for (const [key, entry] of latestPrices) {
-      if (!key.startsWith(variant.id + ':')) continue;
-      const compId = key.split(':')[1];
+    // Compare against each competitor for this variant
+    for (const [compId, entry] of variantPrices) {
       if (ownStoreIds.has(compId)) continue;
       if (entry.price <= 0) continue;
 
       const comp = compMap.get(compId);
       if (!comp) continue;
 
-      // Price sanity check — skip if competitor price is wildly different (>5x or <0.1x)
       for (const own of ownPrices) {
+        // Price sanity check
         const ratio = entry.price / own.price;
         if (ratio > 5 || ratio < 0.1) continue;
 
