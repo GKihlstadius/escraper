@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { scrapeCompetitor, generateRecommendations } from '@/lib/scraper/pipeline';
+import { scrapeCompetitor, generateRecommendations, scrapeUrl } from '@/lib/scraper/pipeline';
 
 export const maxDuration = 300;
 
@@ -13,7 +13,22 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { competitorId, generateRecs, offset } = body;
+  const { competitorId, generateRecs, offset, url, name, category } = body;
+  console.log('[API /scrape] request:', { url, competitorId, generateRecs, userId: user.id });
+
+  // Scrape a single product URL (from "Lägg till produkt" dialog)
+  if (url) {
+    try {
+      const result = await scrapeUrl(url, { name, category });
+      if (!result.success) {
+        return NextResponse.json({ error: result.error }, { status: 400 });
+      }
+      return NextResponse.json(result);
+    } catch (err) {
+      console.error('scrapeUrl error:', err);
+      return NextResponse.json({ error: err instanceof Error ? err.message : 'Scraping misslyckades' }, { status: 500 });
+    }
+  }
 
   // Generate recommendations only
   if (generateRecs) {

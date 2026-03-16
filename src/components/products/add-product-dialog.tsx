@@ -24,26 +24,37 @@ export function AddProductDialog({ open, onOpenChange, onAdded }: Props) {
   const [category, setCategory] = useState<ProductCategory>('övrigt');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError('');
+    setSuccess('');
 
     try {
       const res = await fetch('/api/scrape', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, name, category }),
+        body: JSON.stringify({ url, name: name || undefined, category: category !== 'övrigt' ? category : undefined }),
       });
 
-      if (!res.ok) throw new Error('Scraping misslyckades');
+      const data = await res.json().catch(() => null);
 
+      if (!res.ok) {
+        throw new Error(data?.error || `Scraping misslyckades (${res.status})`);
+      }
+
+      const productName = data?.product?.name || 'Produkten';
+      setSuccess(`${productName} har lagts till!`);
       setUrl('');
       setName('');
       setCategory('övrigt');
-      onOpenChange(false);
       onAdded();
+      setTimeout(() => {
+        setSuccess('');
+        onOpenChange(false);
+      }, 1500);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Ett fel uppstod');
     } finally {
@@ -94,8 +105,9 @@ export function AddProductDialog({ open, onOpenChange, onAdded }: Props) {
             </Select>
           </div>
           {error && <p className="text-sm text-red-600">{error}</p>}
-          <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? 'Scrapar...' : 'Lägg till & scrapa'}
+          {success && <p className="text-sm text-green-600">{success}</p>}
+          <Button type="submit" className="w-full" disabled={loading || !!success}>
+            {loading ? 'Scrapar... (kan ta 10-30 sek)' : success ? 'Klar!' : 'Lägg till & scrapa'}
           </Button>
         </form>
       </DialogContent>

@@ -185,6 +185,38 @@ const PRODUCT_TYPES: Record<string, string> = {
   'handtag': 'tillbehör',
   'hjul': 'tillbehör',
   'madrass': 'tillbehör',
+  'isofix bas': 'tillbehör',
+  'isofix-bas': 'tillbehör',
+  'base t': 'tillbehör',
+  'base m': 'tillbehör',
+  'base z': 'tillbehör',
+  'i-base': 'tillbehör',
+  'basefix': 'tillbehör',
+  'familyfix': 'tillbehör',
+  'vindskydd': 'tillbehör',
+  'parasoll': 'tillbehör',
+  'köpåse': 'tillbehör',
+  'organiser': 'tillbehör',
+  'transportväska': 'tillbehör',
+  'resväska': 'tillbehör',
+  'skötväska': 'tillbehör',
+  'cupholder': 'tillbehör',
+  'cup holder': 'tillbehör',
+  'footmuff': 'tillbehör',
+  'raincover': 'tillbehör',
+  'syskonsits': 'tillbehör',
+  'extrasits': 'tillbehör',
+  'extra sits': 'tillbehör',
+  'solsuflett': 'tillbehör',
+  'breezy suflett': 'tillbehör',
+  'snack tray': 'tillbehör',
+  'snack-tray': 'tillbehör',
+  'barsele': 'tillbehör',
+  'cabin bag': 'tillbehör',
+  'cabin väska': 'tillbehör',
+  'resebag': 'tillbehör',
+  'travel bag': 'tillbehör',
+  'bilstolsbas': 'tillbehör',
 };
 
 // Detect if a product name indicates a bundle/package
@@ -193,24 +225,53 @@ export function isBundle(name: string): boolean {
   return BUNDLE_INDICATORS.some(w => lower.includes(w));
 }
 
-// Extract the product type from a name
-export function extractProductType(name: string): string | null {
+// Extract the product type from a name (and optionally URL)
+export function extractProductType(name: string, url?: string): string | null {
   const lower = name.toLowerCase();
   for (const [keyword, type] of Object.entries(PRODUCT_TYPES)) {
     if (lower.includes(keyword)) return type;
   }
+  // Also check URL path for accessory keywords (e.g. /cybex-gazelle-s-liggdel-...)
+  if (url) {
+    const urlLower = url.toLowerCase();
+    for (const [keyword, type] of Object.entries(PRODUCT_TYPES)) {
+      if (type === 'tillbehör' && urlLower.includes(keyword)) return type;
+    }
+    // Additional URL-only accessory patterns
+    const urlAccessoryPatterns = [
+      'bas-till', 'base-', '-bas-', '-base-', 'isofix-bas', 'i-base',
+      '-liggdel-', '-sittdel-', '-syskonsits-', '-snack-tray',
+      '-solsuflett-', '-breezy-', '-barsele-', '-bilstolsbas',
+      '-cabin-', '-travel-bag-', '-resebag-', '-footmuff-',
+    ];
+    for (const pattern of urlAccessoryPatterns) {
+      if (urlLower.includes(pattern)) return 'tillbehör';
+    }
+  }
   return null;
 }
 
-// Check if two product names are type-compatible for matching
-export function areTypesCompatible(nameA: string, nameB: string): boolean {
+// Check if two product names are type-compatible for matching.
+// Also accepts URLs for better accessory detection.
+export function areTypesCompatible(
+  nameA: string,
+  nameB: string,
+  urlA?: string,
+  urlB?: string
+): boolean {
   const bundleA = isBundle(nameA);
   const bundleB = isBundle(nameB);
   // A bundle should not match a non-bundle
   if (bundleA !== bundleB) return false;
 
-  const typeA = extractProductType(nameA);
-  const typeB = extractProductType(nameB);
+  const typeA = extractProductType(nameA, urlA);
+  const typeB = extractProductType(nameB, urlB);
+
+  // If either is an accessory/tillbehör, they only match other accessories
+  if (typeA === 'tillbehör' || typeB === 'tillbehör') {
+    return typeA === typeB;
+  }
+
   // If both have types, they must match
   if (typeA && typeB && typeA !== typeB) return false;
 

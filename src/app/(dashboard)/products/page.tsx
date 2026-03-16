@@ -70,17 +70,15 @@ export default function ProductsPage() {
         )
       `)
       .eq('is_active', true)
-      .order('name');
+      .order('created_at', { ascending: false });
 
-    // Only keep products that have prices from both own stores AND at least one competitor
+    // Show all active products that have at least one price
     const allProducts = (data || []) as unknown as ProductWithVariants[];
-    const comparableProducts = allProducts.filter(p => {
+    const withPrices = allProducts.filter(p => {
       const allPrices = p.variants?.flatMap(v => v.prices || []) || [];
-      const hasOwn = allPrices.some(pr => pr.competitor?.is_own_store);
-      const hasCompetitor = allPrices.some(pr => pr.competitor && !pr.competitor.is_own_store);
-      return hasOwn && hasCompetitor;
+      return allPrices.length > 0;
     });
-    setProducts(comparableProducts);
+    setProducts(withPrices);
     setLoading(false);
   }
 

@@ -401,16 +401,22 @@ async function findProduct(
     if (data) return data;
   }
 
-  // Step 2: Exact normalized_name match
+  // Step 2: Exact normalized_name match (with type compatibility check)
   const modelNormalized = normalizeName(extractModelName(parsed.name));
   {
     const { data } = await supabase
       .from('products')
       .select('*')
       .eq('normalized_name', modelNormalized)
-      .limit(1)
-      .single();
-    if (data) return data;
+      .limit(5);
+    if (data && data.length > 0) {
+      const compatible = data.filter((d: { name: string }) => areTypesCompatible(parsed.name, d.name, parsed.url));
+      if (compatible.length === 1) return compatible[0];
+      if (compatible.length > 1) {
+        const best = pickBestMatch(compatible, parsed.name);
+        if (best) return best;
+      }
+    }
   }
 
   // Step 3: Model key ILIKE with brand match (fuzzy brand)
@@ -426,7 +432,7 @@ async function findProduct(
       const nameMatches = brandCandidates.filter((p: { normalized_name: string }) =>
         allWordsLower.every(w => p.normalized_name.includes(w))
       );
-      const compatible = nameMatches.filter((d: { name: string }) => areTypesCompatible(parsed.name, d.name));
+      const compatible = nameMatches.filter((d: { name: string }) => areTypesCompatible(parsed.name, d.name, parsed.url));
       if (compatible.length === 1) return compatible[0];
       if (compatible.length > 1) {
         const best = pickBestMatch(compatible, parsed.name);
@@ -439,7 +445,7 @@ async function findProduct(
         const firstWordMatches = brandCandidates.filter((p: { normalized_name: string }) =>
           p.normalized_name.includes(firstWord)
         );
-        const compat2 = firstWordMatches.filter((d: { name: string }) => areTypesCompatible(parsed.name, d.name));
+        const compat2 = firstWordMatches.filter((d: { name: string }) => areTypesCompatible(parsed.name, d.name, parsed.url));
         if (compat2.length === 1) return compat2[0];
         if (compat2.length > 1) {
           const best = pickBestMatch(compat2, parsed.name);
@@ -451,7 +457,7 @@ async function findProduct(
 
   // Step 4: Brand-only search with token overlap scoring
   if (brandCandidates.length > 0) {
-    const compatible = brandCandidates.filter((c: { name: string }) => areTypesCompatible(parsed.name, c.name));
+    const compatible = brandCandidates.filter((c: { name: string }) => areTypesCompatible(parsed.name, c.name, parsed.url));
     const best = pickBestMatch(compatible, parsed.name, 0.7); // Higher threshold to avoid false matches
     if (best) return best;
   }
@@ -592,6 +598,209 @@ async function updateLog(
     .from('scraping_logs')
     .update({ status, message, products_scraped: productsScraped, duration_ms: durationMs })
     .eq('id', logId);
+}
+
+// Scrape a single product URL and save it as an own-store product.
+// Then search competitors for matching products to enable price comparison.
+export async function scrapeUrl(
+  url: string,
+  overrides?: { name?: string; category?: string }
+): Promise<{ success: boolean; product?: { id: string; name: string; brand: string; price: number }; error?: string }> {
+  const supabase = getServiceClient();
+
+  // Step 1: Fetch and parse the URL
+  let html: string;
+  try {
+    html = await renderPage(url);
+  } catch {
+    return { success: false, error: `Kunde inte hämta sidan: ${url}` };
+  }
+
+  const parsed = parseProductPage(html, url);
+  if (!parsed || !parsed.name || !parsed.price) {
+    return { success: false, error: 'Kunde inte hitta produktdata på sidan' };
+  }
+
+  // Apply overrides
+  if (overrides?.name) parsed.name = overrides.name;
+  if (overrides?.category) parsed.category = overrides.category as ParsedProduct['category'];
+
+  // Step 2: Determine which own store this URL belongs to
+  const { data: ownStores } = await supabase
+    .from('competitors')
+    .select('id, name, url')
+    .eq('is_own_store', true)
+    .eq('is_active', true);
+
+  let ownStoreId: string | null = null;
+  for (const store of ownStores || []) {
+    if (store.url && url.includes(new URL(store.url).hostname)) {
+      ownStoreId = store.id;
+      break;
+    }
+  }
+
+  if (!ownStoreId) {
+    // URL doesn't match any own store — use the first own store as fallback
+    if (ownStores && ownStores.length > 0) {
+      ownStoreId = ownStores[0].id;
+    } else {
+      return { success: false, error: 'Inga egna butiker konfigurerade' };
+    }
+  }
+
+  // Step 3: Save the product
+  const result: ScrapeResult = {
+    competitorId: ownStoreId,
+    competitorName: 'Manual add',
+    productsScraped: 0,
+    newPrices: 0,
+    alerts: 0,
+    totalUrls: 1,
+    urlsProcessed: 1,
+    hasMore: false,
+    errors: [],
+  };
+
+  await saveProduct(supabase, ownStoreId, parsed, result);
+
+  // Step 4: Find the saved product (may already exist if duplicate)
+  const normalizedName = normalizeName(parsed.name);
+  const product = await findProduct(supabase, normalizedName, parsed);
+
+  if (!product && result.productsScraped === 0) {
+    return { success: false, error: 'Produkten kunde inte sparas' };
+  }
+
+  // Step 5: Find matching competitor prices already in the DB
+  // When competitors were scraped before this product existed, their prices
+  // may be stored under separate product records. Find and merge them.
+  if (product) {
+    await mergeCompetitorPrices(supabase, product, parsed);
+  }
+
+  return {
+    success: true,
+    product: product ? {
+      id: product.id,
+      name: product.name,
+      brand: product.brand || parsed.brand,
+      price: parsed.price,
+    } : undefined,
+  };
+}
+
+// After manually adding a product, find competitor prices that match
+// but were stored under separate product records (because the own-store
+// product didn't exist when competitors were scraped).
+async function mergeCompetitorPrices(
+  supabase: SupabaseServiceClient,
+  product: { id: string; name: string; brand: string; normalized_name: string },
+  parsed: ParsedProduct
+) {
+  // Get competitor (non-own) store IDs
+  const { data: competitors } = await supabase
+    .from('competitors')
+    .select('id')
+    .eq('is_own_store', false)
+    .eq('is_active', true);
+
+  if (!competitors?.length) return;
+  const competitorIds = competitors.map((c: { id: string }) => c.id);
+
+  // Find other products with similar names from the same brand
+  const brandCandidates = await findByBrand(supabase, parsed.brand);
+  const modelKey = extractModelKey(parsed.name, parsed.brand);
+
+  const duplicates = brandCandidates.filter((c: { id: string; name: string; normalized_name: string }) => {
+    if (c.id === product.id) return false;
+    // Check type compatibility
+    if (!areTypesCompatible(parsed.name, c.name, parsed.url)) return false;
+    // Check name similarity
+    const candidateKey = extractModelKey(c.name, product.brand);
+    const score = tokenOverlapScore(modelKey, candidateKey);
+    return score >= 0.7;
+  });
+
+  if (duplicates.length === 0) return;
+
+  console.log(`[mergeCompetitorPrices] Found ${duplicates.length} potential duplicates for "${product.name}":`,
+    duplicates.map((d: { name: string }) => d.name));
+
+  for (const dup of duplicates) {
+    // Get all variants of the duplicate product
+    const { data: dupVariants } = await supabase
+      .from('product_variants')
+      .select('id, color, variant_name, image')
+      .eq('product_id', dup.id);
+
+    if (!dupVariants?.length) continue;
+
+    for (const dupVar of dupVariants) {
+      // Get competitor prices for this variant
+      const { data: dupPrices } = await supabase
+        .from('product_prices')
+        .select('*')
+        .eq('variant_id', dupVar.id)
+        .in('competitor_id', competitorIds);
+
+      if (!dupPrices?.length) continue;
+
+      // Find or create a matching variant in our product
+      let targetVariant = await findVariant(supabase, product.id, dupVar.color);
+      if (!targetVariant) {
+        const { data: newVar } = await supabase
+          .from('product_variants')
+          .insert({
+            product_id: product.id,
+            color: dupVar.color,
+            variant_name: dupVar.variant_name,
+            image: dupVar.image,
+          })
+          .select()
+          .single();
+        targetVariant = newVar;
+      }
+
+      if (!targetVariant) continue;
+
+      // Move competitor prices to the correct variant
+      for (const price of dupPrices) {
+        await supabase
+          .from('product_prices')
+          .update({ variant_id: targetVariant.id })
+          .eq('id', price.id);
+      }
+
+      console.log(`[mergeCompetitorPrices] Moved ${dupPrices.length} prices from "${dup.name}" variant to "${product.name}"`);
+    }
+
+    // If the duplicate product has no remaining prices, deactivate it
+    const { data: remainingVariants } = await supabase
+      .from('product_variants')
+      .select('id')
+      .eq('product_id', dup.id);
+
+    let hasRemainingPrices = false;
+    for (const rv of remainingVariants || []) {
+      const { count } = await supabase
+        .from('product_prices')
+        .select('*', { count: 'exact', head: true })
+        .eq('variant_id', rv.id);
+      if (count && count > 0) {
+        hasRemainingPrices = true;
+        break;
+      }
+    }
+
+    if (!hasRemainingPrices) {
+      await supabase
+        .from('products')
+        .update({ is_active: false })
+        .eq('id', dup.id);
+      console.log(`[mergeCompetitorPrices] Deactivated empty duplicate product "${dup.name}"`);
+    }
+  }
 }
 
 // Generate price recommendations after scraping
