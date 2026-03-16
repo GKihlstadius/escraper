@@ -154,8 +154,10 @@ ${context}`;
   const groqData = await groqRes.json();
   const reply = groqData.choices?.[0]?.message?.content || 'Kunde inte generera svar.';
 
-  // Extract memories in the background (don't block the response)
-  extractMemories(groqApiKey, user.id, message, reply, conversationId || null, supabase).catch(() => {});
+  // Extract memories before responding (must complete before serverless function exits)
+  await extractMemories(groqApiKey, user.id, message, reply, conversationId || null, supabase).catch((err) => {
+    console.log('[memory] Top-level extraction error:', err instanceof Error ? err.message : err);
+  });
 
   return NextResponse.json({ reply });
 }
