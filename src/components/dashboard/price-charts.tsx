@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import {
   LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer,
@@ -32,6 +32,20 @@ export function ProductPriceComparison({
   const [selectedProductId, setSelectedProductId] = useState(products[0]?.id || '');
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Close dropdown on click outside
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [open]);
   const ownIds = useMemo(() => new Set(ownStoreIds || competitors.filter(c => c.isOwn).map(c => c.id)), [ownStoreIds, competitors]);
 
   const filtered = useMemo(() => {
@@ -148,14 +162,14 @@ export function ProductPriceComparison({
         <h2 className="text-sm font-medium shrink-0">Prisjämförelse</h2>
 
         {/* Product search */}
-        <div className="relative w-full sm:max-w-sm">
+        <div ref={dropdownRef} className="relative w-full sm:max-w-sm">
           <input
+            ref={inputRef}
             type="text"
             placeholder="Sök produkt..."
             value={open ? search : (selectedProduct ? `${selectedProduct.brand} ${selectedProduct.name}` : '')}
             onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
             onFocus={() => { setOpen(true); setSearch(''); }}
-            onBlur={() => setTimeout(() => setOpen(false), 200)}
             className="w-full h-10 sm:h-8 px-3 sm:px-2.5 text-sm rounded-lg border border-zinc-200 bg-white outline-none focus:border-zinc-400 transition-colors"
           />
           {open && (
@@ -176,6 +190,7 @@ export function ProductPriceComparison({
                         setSelectedProductId(p.id);
                         setSearch('');
                         setOpen(false);
+                        inputRef.current?.blur();
                       }}
                       className={`w-full text-left px-3 py-3 sm:py-2 text-sm hover:bg-zinc-50 transition-colors flex items-center justify-between ${
                         p.id === selectedProductId ? 'bg-zinc-50 font-medium' : ''

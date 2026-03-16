@@ -855,11 +855,11 @@ export async function generateRecommendations() {
       const prices = variant.prices || [];
 
       // Get latest price per competitor
-      const latestByCompetitor = new Map<string, number>();
+      const latestByCompetitor = new Map<string, { price: number; scrapedAt: string }>();
       for (const p of prices) {
         const existing = latestByCompetitor.get(p.competitor_id);
-        if (!existing || new Date(p.scraped_at) > new Date(existing.toString())) {
-          latestByCompetitor.set(p.competitor_id, p.price);
+        if (!existing || new Date(p.scraped_at) > new Date(existing.scrapedAt)) {
+          latestByCompetitor.set(p.competitor_id, { price: p.price, scrapedAt: p.scraped_at });
         }
       }
 
@@ -867,12 +867,12 @@ export async function generateRecommendations() {
       let ourPrice: number | null = null;
       let lowestCompetitor: { id: string; price: number } | null = null;
 
-      for (const [compId, price] of latestByCompetitor) {
+      for (const [compId, entry] of latestByCompetitor) {
         if (ownStoreIds.includes(compId)) {
-          ourPrice = price;
+          ourPrice = entry.price;
         } else {
-          if (!lowestCompetitor || price < lowestCompetitor.price) {
-            lowestCompetitor = { id: compId, price };
+          if (!lowestCompetitor || entry.price < lowestCompetitor.price) {
+            lowestCompetitor = { id: compId, price: entry.price };
           }
         }
       }
