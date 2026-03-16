@@ -182,26 +182,17 @@ async function extractMemories(
         messages: [
           {
             role: 'system',
-            content: `Du analyserar konversationer och extraherar viktiga fakta att minnas för framtida samtal.
+            content: `Extrahera fakta från konversationen. Svara BARA med giltig JSON.
 
-Svara ENBART med en JSON-array av minnen. Varje minne har:
-- "category": en av "fact", "preference", "decision", "context"
-- "content": en kort mening som beskriver vad som ska sparas
+Format (exakt detta format, inget annat):
+[{"category":"fact","content":"Beskrivning här"}]
 
-Kategorier:
-- fact: Fakta om användarens verksamhet, produkter, eller marknaden
-- preference: Användarens preferenser för priser, strategi, eller kommunikation
-- decision: Beslut användaren har tagit (t.ex. "sänkt priset på X")
-- context: Viktig bakgrundsinformation
+Kategorier: fact, preference, decision, context
+Regler: Max 2 objekt. Tom array [] om inget att spara. Svenska. Tredje person.
+Spara INTE prisdata. Fokusera på strategi och beslut.
 
-REGLER:
-- Extrahera BARA om det finns något värt att minnas (inte varje meddelande har det)
-- Svara med tom array [] om inget är minnesvärt
-- Max 2 minnen per meddelande
-- Skriv på svenska
-- Formulera i tredje person ("Användaren vill...", "Butiken har...")
-- Inkludera INTE prisdata eller statistik som ändras ofta
-- Fokusera på strategi, beslut och preferenser`,
+Exempel-svar:
+[{"category":"preference","content":"Användaren vill alltid vara billigast"},{"category":"fact","content":"Butiken säljer barnvagnar"}]`,
           },
           {
             role: 'user',
@@ -216,11 +207,19 @@ REGLER:
     const data = await res.json();
     const content = data.choices?.[0]?.message?.content || '[]';
 
-    // Parse the JSON array from the response
-    const jsonMatch = content.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) return;
-
-    const memories: Array<{ category: string; content: string }> = JSON.parse(jsonMatch[0]);
+    // Parse the JSON array from the response (handle malformed LLM output)
+    let memories: Array<{ category: string; content: string }> = [];
+    try {
+      const jsonMatch = content.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) return;
+      memories = JSON.parse(jsonMatch[0]);
+    } catch {
+      // LLM sometimes outputs individual objects instead of array — try to extract them
+      const objMatches = content.matchAll(/\{\s*"category"\s*:\s*"([^"]+)"\s*,\s*"content"\s*:\s*"([^"]+)"\s*\}/g);
+      for (const m of objMatches) {
+        memories.push({ category: m[1], content: m[2] });
+      }
+    }
     if (!Array.isArray(memories) || memories.length === 0) return;
 
     const validCategories = ['fact', 'preference', 'decision', 'context'];
