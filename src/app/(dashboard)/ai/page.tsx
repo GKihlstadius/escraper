@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Send, Bot, User, Plus, MessageSquare, Trash2 } from 'lucide-react';
+import { Send, Bot, User, Plus, MessageSquare, Trash2, Brain, X, Pencil, Check } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 
 interface Message {
@@ -19,10 +19,32 @@ interface Conversation {
   updated_at: string;
 }
 
+interface Memory {
+  id: string;
+  category: 'fact' | 'preference' | 'decision' | 'context';
+  content: string;
+  created_at: string;
+  updated_at?: string;
+}
+
 const GREETING: Message = {
   role: 'assistant',
   content:
     'Hej! Jag kan hjälpa dig analysera priser, konkurrenter och trender. Fråga mig vad som helst om din produktdata.',
+};
+
+const CATEGORY_LABELS: Record<string, string> = {
+  fact: 'Fakta',
+  preference: 'Preferens',
+  decision: 'Beslut',
+  context: 'Kontext',
+};
+
+const CATEGORY_COLORS: Record<string, string> = {
+  fact: 'bg-blue-100 text-blue-700',
+  preference: 'bg-purple-100 text-purple-700',
+  decision: 'bg-green-100 text-green-700',
+  context: 'bg-amber-100 text-amber-700',
 };
 
 export default function AIChatPage() {
@@ -36,14 +58,22 @@ export default function AIChatPage() {
   const [loadingConversations, setLoadingConversations] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Memory state
+  const [memories, setMemories] = useState<Memory[]>([]);
+  const [showMemories, setShowMemories] = useState(false);
+  const [editingMemory, setEditingMemory] = useState<string | null>(null);
+  const [editContent, setEditContent] = useState('');
+
   // Load conversations after auth session is ready
   useEffect(() => {
-    // Wait for auth to be established before loading conversations
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) loadConversations();
+      if (session) {
+        loadConversations();
+        loadMemories();
+      }
     });
-    // Also try immediately (session may already exist)
     loadConversations();
+    loadMemories();
     return () => subscription.unsubscribe();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -60,6 +90,46 @@ export default function AIChatPage() {
     setConversations(data || []);
     setLoadingConversations(false);
   }, [supabase]);
+
+  async function loadMemories() {
+    try {
+      const res = await fetch('/api/chat/memories');
+      if (res.ok) {
+        const data = await res.json();
+        setMemories(data.memories || []);
+      }
+    } catch {
+      // silent
+    }
+  }
+
+  async function deleteMemory(id: string) {
+    const res = await fetch('/api/chat/memories', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+    if (res.ok) {
+      setMemories((prev) => prev.filter((m) => m.id !== id));
+    }
+  }
+
+  async function updateMemory(id: string) {
+    if (!editContent.trim()) return;
+    const res = await fetch('/api/chat/memories', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, content: editContent.trim() }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      setMemories((prev) =>
+        prev.map((m) => (m.id === id ? { ...m, content: data.memory.content, updated_at: data.memory.updated_at } : m))
+      );
+      setEditingMemory(null);
+      setEditContent('');
+    }
+  }
 
   async function loadMessages(conversationId: string) {
     const { data } = await supabase
@@ -140,11 +210,11 @@ export default function AIChatPage() {
         .filter((m) => m !== GREETING)
         .map((m) => ({ role: m.role, content: m.content }));
 
-      // Call API with history
+      // Call API with history and conversationId
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, history }),
+        body: JSON.stringify({ message, history, conversationId }),
       });
 
       const data = await res.json();
@@ -171,6 +241,9 @@ export default function AIChatPage() {
         if (!conv) return prev;
         return [{ ...conv, updated_at: new Date().toISOString() }, ...prev.filter((c) => c.id !== conversationId)];
       });
+
+      // Refresh memories after a short delay (extraction happens in background)
+      setTimeout(() => loadMemories(), 3000);
     } catch {
       setMessages((prev) => [...prev, { role: 'assistant', content: 'Ett fel uppstod. Försök igen.' }]);
     } finally {
@@ -201,9 +274,20 @@ export default function AIChatPage() {
 
   return (
     <div className="flex flex-col h-[calc(100vh-6rem)]">
-      <div className="mb-4">
-        <h1 className="text-2xl font-bold">AI Assistent</h1>
-        <p className="text-muted-foreground">Fråga om priser, trender och konkurrenter</p>
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">AI Assistent</h1>
+          <p className="text-muted-foreground">Fråga om priser, trender och konkurrenter</p>
+        </div>
+        <Button
+          variant={showMemories ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setShowMemories(!showMemories)}
+          className="gap-2"
+        >
+          <Brain className="h-4 w-4" />
+          Minne ({memories.length})
+        </Button>
       </div>
 
       <div className="flex flex-1 gap-4 overflow-hidden">
@@ -314,6 +398,82 @@ export default function AIChatPage() {
             </p>
           </div>
         </Card>
+
+        {/* Memory panel */}
+        {showMemories && (
+          <Card className="w-80 flex-shrink-0 flex flex-col overflow-hidden">
+            <div className="p-3 border-b flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Brain className="h-4 w-4 text-purple-600" />
+                <h3 className="font-semibold text-sm">AI Minne</h3>
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => setShowMemories(false)} className="h-6 w-6 p-0">
+                <X className="h-3 w-3" />
+              </Button>
+            </div>
+
+            <ScrollArea className="flex-1">
+              <div className="p-3 space-y-2">
+                {memories.length === 0 && (
+                  <p className="text-xs text-muted-foreground text-center py-8">
+                    Inga minnen ännu. AI:n sparar automatiskt viktiga insikter från dina konversationer.
+                  </p>
+                )}
+                {memories.map((mem) => (
+                  <div key={mem.id} className="border rounded-lg p-2.5 group hover:border-gray-300 transition-colors">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${CATEGORY_COLORS[mem.category] || 'bg-gray-100 text-gray-700'}`}>
+                        {CATEGORY_LABELS[mem.category] || mem.category}
+                      </span>
+                      <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {editingMemory === mem.id ? (
+                          <button
+                            onClick={() => updateMemory(mem.id)}
+                            className="p-1 hover:text-green-600"
+                            title="Spara"
+                          >
+                            <Check className="h-3 w-3" />
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => { setEditingMemory(mem.id); setEditContent(mem.content); }}
+                            className="p-1 hover:text-blue-600"
+                            title="Redigera"
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => deleteMemory(mem.id)}
+                          className="p-1 hover:text-red-500"
+                          title="Ta bort"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </div>
+                    {editingMemory === mem.id ? (
+                      <textarea
+                        value={editContent}
+                        onChange={(e) => setEditContent(e.target.value)}
+                        className="w-full text-xs border rounded p-1.5 resize-none"
+                        rows={3}
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); updateMemory(mem.id); }
+                          if (e.key === 'Escape') { setEditingMemory(null); setEditContent(''); }
+                        }}
+                      />
+                    ) : (
+                      <p className="text-xs text-gray-700 leading-relaxed">{mem.content}</p>
+                    )}
+                    <p className="text-[10px] text-muted-foreground mt-1">{formatDate(mem.created_at)}</p>
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+          </Card>
+        )}
       </div>
     </div>
   );

@@ -10,7 +10,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { message, history } = await request.json();
+  const { message, history, conversationId } = await request.json();
   if (!message) {
     return NextResponse.json({ error: 'Message required' }, { status: 400 });
   }
@@ -20,8 +20,8 @@ export async function POST(request: NextRequest) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 
-  // Gather rich context from database
-  const [productsRes, alertsRes, recommendationsRes, competitorsRes, lastScrapeRes] = await Promise.all([
+  // Gather rich context from database (including memories)
+  const [productsRes, alertsRes, recommendationsRes, competitorsRes, lastScrapeRes, memoriesRes] = await Promise.all([
     supabase.from('products').select(`
       id, name, brand, category,
       variants:product_variants(
@@ -55,11 +55,19 @@ export async function POST(request: NextRequest) {
       .select('created_at, status, products_scraped, message')
       .order('created_at', { ascending: false })
       .limit(3),
+
+    supabase.from('chat_memories')
+      .select('id, category, content')
+      .eq('user_id', user.id)
+      .order('updated_at', { ascending: false })
+      .limit(50),
   ]);
 
   const products = productsRes.data || [];
   const competitors = competitorsRes.data || [];
   const ownStoreIds = new Set(competitors.filter((c: any) => c.is_own_store).map((c: any) => c.id));
+
+  const memories = memoriesRes.data || [];
 
   const context = buildContext(
     products,
@@ -68,6 +76,7 @@ export async function POST(request: NextRequest) {
     competitors,
     lastScrapeRes.data || [],
     ownStoreIds,
+    memories,
   );
 
   // Call Groq API
@@ -109,6 +118,9 @@ REGLER:
 - Om data saknas, säg det ärligt
 - Ge max 5-7 produkter per lista, de viktigaste först
 
+MINNE:
+Du har tillgång till sparade minnen från tidigare konversationer. Använd dessa för att ge mer personliga och relevanta svar. Om användaren ber dig "kom ihåg" något, bekräfta det i ditt svar.
+
 ${context}`;
 
   // Build messages array with conversation history for multi-turn context
@@ -142,7 +154,103 @@ ${context}`;
   const groqData = await groqRes.json();
   const reply = groqData.choices?.[0]?.message?.content || 'Kunde inte generera svar.';
 
+  // Extract memories in the background (don't block the response)
+  extractMemories(groqApiKey, user.id, message, reply, conversationId || null, supabase).catch(() => {});
+
   return NextResponse.json({ reply });
+}
+
+// Use a separate fast LLM call to extract memorable facts from the conversation
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function extractMemories(
+  groqApiKey: string,
+  userId: string,
+  userMessage: string,
+  assistantReply: string,
+  conversationId: string | null,
+  supabase: any,
+) {
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${groqApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'llama-3.1-8b-instant',
+        messages: [
+          {
+            role: 'system',
+            content: `Du analyserar konversationer och extraherar viktiga fakta att minnas för framtida samtal.
+
+Svara ENBART med en JSON-array av minnen. Varje minne har:
+- "category": en av "fact", "preference", "decision", "context"
+- "content": en kort mening som beskriver vad som ska sparas
+
+Kategorier:
+- fact: Fakta om användarens verksamhet, produkter, eller marknaden
+- preference: Användarens preferenser för priser, strategi, eller kommunikation
+- decision: Beslut användaren har tagit (t.ex. "sänkt priset på X")
+- context: Viktig bakgrundsinformation
+
+REGLER:
+- Extrahera BARA om det finns något värt att minnas (inte varje meddelande har det)
+- Svara med tom array [] om inget är minnesvärt
+- Max 2 minnen per meddelande
+- Skriv på svenska
+- Formulera i tredje person ("Användaren vill...", "Butiken har...")
+- Inkludera INTE prisdata eller statistik som ändras ofta
+- Fokusera på strategi, beslut och preferenser`,
+          },
+          {
+            role: 'user',
+            content: `Användare: ${userMessage}\n\nAssistent: ${assistantReply}`,
+          },
+        ],
+        temperature: 0,
+        max_tokens: 500,
+      }),
+    });
+
+    const data = await res.json();
+    const content = data.choices?.[0]?.message?.content || '[]';
+
+    // Parse the JSON array from the response
+    const jsonMatch = content.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) return;
+
+    const memories: Array<{ category: string; content: string }> = JSON.parse(jsonMatch[0]);
+    if (!Array.isArray(memories) || memories.length === 0) return;
+
+    const validCategories = ['fact', 'preference', 'decision', 'context'];
+    for (const mem of memories.slice(0, 2)) {
+      if (!mem.content || !validCategories.includes(mem.category)) continue;
+
+      // Check for duplicate/similar memories
+      const { data: existing } = await supabase
+        .from('chat_memories')
+        .select('id, content')
+        .eq('user_id', userId)
+        .eq('category', mem.category);
+
+      const isDuplicate = existing?.some((e: { id: string; content: string }) =>
+        e.content.toLowerCase().includes(mem.content.toLowerCase().slice(0, 30)) ||
+        mem.content.toLowerCase().includes(e.content.toLowerCase().slice(0, 30))
+      );
+
+      if (isDuplicate) continue;
+
+      await supabase.from('chat_memories').insert({
+        user_id: userId,
+        category: mem.category,
+        content: mem.content,
+        source_conversation_id: conversationId,
+      });
+    }
+  } catch {
+    // Silent fail — memory extraction is non-critical
+  }
 }
 
 function buildContext(
@@ -152,8 +260,27 @@ function buildContext(
   competitors: any[],
   scrapes: any[],
   ownStoreIds: Set<string>,
+  memories: any[] = [],
 ): string {
   let ctx = '';
+
+  // ── Memories from previous conversations ──
+  if (memories.length > 0) {
+    ctx += '## Minnen från tidigare konversationer\n';
+    const byCategory = new Map<string, string[]>();
+    for (const m of memories) {
+      if (!byCategory.has(m.category)) byCategory.set(m.category, []);
+      byCategory.get(m.category)!.push(m.content);
+    }
+    const labels: Record<string, string> = {
+      fact: 'Fakta', preference: 'Preferenser', decision: 'Beslut', context: 'Kontext',
+    };
+    for (const [cat, items] of byCategory) {
+      ctx += `### ${labels[cat] || cat}\n`;
+      for (const item of items) ctx += `- ${item}\n`;
+    }
+    ctx += '\n';
+  }
 
   // ── Competitors overview ──
   ctx += '## Butiker\n';
