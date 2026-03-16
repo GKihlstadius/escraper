@@ -38,11 +38,6 @@ export default async function RecommendationsPage() {
 
   const productMap = new Map(products.map(p => [p.id, p]));
   const compMap = new Map(competitors.map(c => [c.id, c]));
-  const variantToProduct = new Map(variants.map(v => [v.id, v.product_id]));
-  const activeProductIds = new Set(products.map(p => p.id));
-  const activeVariantIds = new Set(
-    variants.filter(v => activeProductIds.has(v.product_id)).map(v => v.id)
-  );
   const ownStores = competitors.filter(c => c.is_own_store);
   const ownStoreIds = new Set(ownStores.map(c => c.id));
 
