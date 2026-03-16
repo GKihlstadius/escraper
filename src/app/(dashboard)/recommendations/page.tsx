@@ -19,7 +19,13 @@ interface PriceDiff {
 }
 
 export default async function RecommendationsPage() {
-  const supabase = await createClient();
+  let supabase;
+  try {
+    supabase = await createClient();
+  } catch (e) {
+    console.error('[recommendations] Failed to create supabase client:', e);
+    throw new Error('Failed to initialize database connection');
+  }
 
   // Only consider prices from the last 30 days
   const thirtyDaysAgo = new Date();
@@ -31,6 +37,19 @@ export default async function RecommendationsPage() {
     supabase.from('competitors').select('id, name, is_own_store').eq('is_active', true),
     supabase.from('product_variants').select('id, product_id'),
   ]);
+
+  if (productsRes.error) {
+    console.error('[recommendations] products query error:', productsRes.error);
+    throw new Error(`Products query failed: ${productsRes.error.message}`);
+  }
+  if (competitorsRes.error) {
+    console.error('[recommendations] competitors query error:', competitorsRes.error);
+    throw new Error(`Competitors query failed: ${competitorsRes.error.message}`);
+  }
+  if (variantsRes.error) {
+    console.error('[recommendations] variants query error:', variantsRes.error);
+    throw new Error(`Variants query failed: ${variantsRes.error.message}`);
+  }
 
   const products = productsRes.data || [];
   const competitors = competitorsRes.data || [];
@@ -53,9 +72,11 @@ export default async function RecommendationsPage() {
       .range(offset, offset + 999);
     if (!data || data.length === 0) break;
     allPrices = allPrices.concat(data);
-    offset += 1000;
     if (data.length < 1000) break;
+    offset += 1000;
   }
+
+  console.log(`[recommendations] Loaded ${allPrices.length} prices, ${products.length} products, ${variants.length} variants`);
 
   // Keep only latest price per variant+competitor, grouped by variant_id
   const latestByKey = new Map<string, { price: number; url: string | null; scraped_at: string }>();
