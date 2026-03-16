@@ -49,6 +49,8 @@ export default async function DashboardPage() {
   const comparableCount = [...productsWithOwn].filter(id => productsWithComp.has(id)).length;
 
   // ── Product price comparison data ──
+  // For each product+competitor+date, keep the cheapest price across variants
+  // (avoids mixing variant prices and gives the most competitive view)
   const productPriceMap = new Map<string, Map<string, Map<string, number>>>();
   const productUrlMap = new Map<string, Map<string, string>>();
   for (const p of prices) {
@@ -59,7 +61,10 @@ export default async function DashboardPage() {
     if (!compMap.has(p.competitor_id)) compMap.set(p.competitor_id, new Map());
     const dateMap = compMap.get(p.competitor_id)!;
     const date = p.scraped_at.slice(0, 10);
-    dateMap.set(date, p.price);
+    const existing = dateMap.get(date);
+    if (existing === undefined || p.price < existing) {
+      dateMap.set(date, p.price);
+    }
     if (p.url) {
       if (!productUrlMap.has(productId)) productUrlMap.set(productId, new Map());
       productUrlMap.get(productId)!.set(p.competitor_id, p.url);

@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
           competitor:competitors(name, is_own_store)
         )
       )
-    `).eq('is_active', true).limit(100),
+    `).eq('is_active', true).limit(500),
 
     supabase.from('alerts')
       .select('type, severity, title, message, created_at')
@@ -135,7 +135,7 @@ ${context}`;
       model: 'llama-3.3-70b-versatile',
       messages: chatMessages,
       temperature: 0.2,
-      max_tokens: 1500,
+      max_tokens: 4000,
     }),
   });
 
@@ -181,14 +181,14 @@ function buildContext(
       if (prices.length < 2) continue;
 
       // Get latest price per competitor
-      const latestByStore = new Map<string, { price: number; store: string; isOwn: boolean }>();
+      const latestByStore = new Map<string, { price: number; store: string; isOwn: boolean; scrapedAt: string }>();
       for (const pr of prices) {
         const comp = pr.competitor;
         if (!comp) continue;
         const key = comp.name;
         const existing = latestByStore.get(key);
-        if (!existing || new Date(pr.scraped_at) > new Date(existing.price.toString())) {
-          latestByStore.set(key, { price: pr.price, store: comp.name, isOwn: comp.is_own_store });
+        if (!existing || new Date(pr.scraped_at) > new Date(existing.scrapedAt)) {
+          latestByStore.set(key, { price: pr.price, store: comp.name, isOwn: comp.is_own_store, scrapedAt: pr.scraped_at });
         }
       }
 
@@ -270,6 +270,45 @@ function buildContext(
       const prod = r.product as any;
       const comp = r.competitor as any;
       ctx += `- ${prod?.brand || ''} ${prod?.name || 'Okänd'}: ${Math.round(r.current_price)} kr → ${Math.round(r.recommended_price)} kr (${r.reason})\n`;
+    }
+  }
+
+  // ── Price history (detect trends) ──
+  const priceChanges: Array<{ product: string; store: string; oldPrice: number; newPrice: number; change: number }> = [];
+  for (const p of products) {
+    for (const v of (p.variants || [])) {
+      const prices = v.prices || [];
+      // Group by store and detect changes
+      const byStore = new Map<string, Array<{ price: number; date: string }>>();
+      for (const pr of prices) {
+        const comp = pr.competitor;
+        if (!comp) continue;
+        if (!byStore.has(comp.name)) byStore.set(comp.name, []);
+        byStore.get(comp.name)!.push({ price: pr.price, date: pr.scraped_at });
+      }
+      for (const [store, history] of byStore) {
+        if (history.length < 2) continue;
+        history.sort((a, b) => a.date.localeCompare(b.date));
+        const prev = history[history.length - 2];
+        const curr = history[history.length - 1];
+        if (prev.price !== curr.price) {
+          priceChanges.push({
+            product: `${p.brand} ${p.name}`,
+            store,
+            oldPrice: prev.price,
+            newPrice: curr.price,
+            change: curr.price - prev.price,
+          });
+        }
+      }
+    }
+  }
+  if (priceChanges.length > 0) {
+    priceChanges.sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
+    ctx += `\n## Senaste prisändringar (${priceChanges.length} st)\n`;
+    for (const pc of priceChanges.slice(0, 20)) {
+      const dir = pc.change > 0 ? '↑' : '↓';
+      ctx += `- ${pc.product} hos ${pc.store}: ${Math.round(pc.oldPrice)} → ${Math.round(pc.newPrice)} kr (${dir}${Math.abs(Math.round(pc.change))} kr)\n`;
     }
   }
 
