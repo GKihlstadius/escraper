@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-export const maxDuration = 30; // Dispatcher is fast — just fires off requests
+export const maxDuration = 300; // Must wait for all parallel store scrapes
 
 export async function GET(request: NextRequest) {
   // Verify cron secret
@@ -26,31 +26,46 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: 'No active competitors' });
   }
 
-  // Fan out: fire-and-forget a separate serverless function per store.
-  // Each gets its own 300s budget. We don't await — results are in scraping_logs.
+  // Fan out: trigger all stores in PARALLEL as separate serverless functions.
+  // Each gets its own 300s budget. The dispatcher awaits all responses.
   const baseUrl = request.nextUrl.origin;
   const secret = process.env.CRON_SECRET;
 
-  const dispatched: string[] = [];
-  for (const c of competitors) {
-    // Fire-and-forget: don't await the response
-    fetch(`${baseUrl}/api/cron/scrape-store?id=${c.id}`, {
-      headers: { Authorization: `Bearer ${secret}` },
-    }).catch(() => {}); // ignore network errors on dispatch
-    dispatched.push(c.name);
-  }
+  const results = await Promise.allSettled(
+    competitors.map(async (c) => {
+      try {
+        const res = await fetch(
+          `${baseUrl}/api/cron/scrape-store?id=${c.id}`,
+          {
+            headers: { Authorization: `Bearer ${secret}` },
+            signal: AbortSignal.timeout(290_000),
+          }
+        );
+        const data = await res.json();
+        return { name: c.name, ...data };
+      } catch (err) {
+        return { name: c.name, error: err instanceof Error ? err.message : String(err) };
+      }
+    })
+  );
 
-  // Also fire recommendations (will run after the scrape-store functions finish their DB writes)
-  // Delay slightly so scrapes have time to save data
-  fetch(`${baseUrl}/api/cron/scrape-store?recs=1`, {
-    headers: { Authorization: `Bearer ${secret}` },
-  }).catch(() => {});
+  // Generate recommendations after all scrapes
+  try {
+    const res = await fetch(`${baseUrl}/api/cron/scrape-store?recs=1`, {
+      headers: { Authorization: `Bearer ${secret}` },
+      signal: AbortSignal.timeout(30_000),
+    });
+    await res.json();
+  } catch {}
+
+  const summary = results.map((r) =>
+    r.status === 'fulfilled' ? r.value : { error: r.reason?.message || 'Unknown error' }
+  );
 
   return NextResponse.json({
-    message: 'Scraping dispatched',
+    message: 'Scraping complete',
     timestamp: new Date().toISOString(),
-    stores: dispatched.length,
-    dispatched,
-    note: 'Each store runs as a separate function with 300s budget. Check scraping_logs for results.',
+    stores: competitors.length,
+    results: summary,
   });
 }
