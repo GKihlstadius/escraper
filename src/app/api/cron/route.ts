@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-export const maxDuration = 300; // Must wait for all parallel store scrapes
+export const maxDuration = 60;
 
 export async function GET(request: NextRequest) {
   // Verify cron secret
@@ -26,46 +26,46 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: 'No active competitors' });
   }
 
-  // Fan out: trigger all stores in PARALLEL as separate serverless functions.
-  // Each gets its own 300s budget. The dispatcher awaits all responses.
   const baseUrl = request.nextUrl.origin;
   const secret = process.env.CRON_SECRET;
 
-  const results = await Promise.allSettled(
+  // Dispatch all store scrapes as separate serverless functions.
+  // Each has its own 300s budget and saves results directly to scraping_logs.
+  // We fire all requests in parallel and wait only for them to be ACCEPTED
+  // (i.e., the server starts processing), not for them to complete.
+  // We use a short timeout so fetch resolves/rejects quickly — the important
+  // thing is that Vercel receives the request and spawns the function.
+  const dispatched: string[] = [];
+  await Promise.allSettled(
     competitors.map(async (c) => {
       try {
-        const res = await fetch(
-          `${baseUrl}/api/cron/scrape-store?id=${c.id}`,
-          {
+        // Use AbortController to disconnect after 5s — by then Vercel has
+        // received the request and spawned the scrape-store function.
+        // The spawned function continues independently with its own 300s budget.
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        try {
+          await fetch(`${baseUrl}/api/cron/scrape-store?id=${c.id}`, {
             headers: { Authorization: `Bearer ${secret}` },
-            signal: AbortSignal.timeout(290_000),
-          }
-        );
-        const data = await res.json();
-        return { name: c.name, ...data };
-      } catch (err) {
-        return { name: c.name, error: err instanceof Error ? err.message : String(err) };
+            signal: controller.signal,
+          });
+        } catch {
+          // AbortError is expected — we intentionally disconnect after 5s
+        } finally {
+          clearTimeout(timeout);
+        }
+        dispatched.push(c.name);
+      } catch {
+        dispatched.push(`${c.name} (error)`);
       }
     })
   );
 
-  // Generate recommendations after all scrapes
-  try {
-    const res = await fetch(`${baseUrl}/api/cron/scrape-store?recs=1`, {
-      headers: { Authorization: `Bearer ${secret}` },
-      signal: AbortSignal.timeout(30_000),
-    });
-    await res.json();
-  } catch {}
-
-  const summary = results.map((r) =>
-    r.status === 'fulfilled' ? r.value : { error: r.reason?.message || 'Unknown error' }
-  );
-
   return NextResponse.json({
-    message: 'Scraping complete',
+    message: 'Scraping dispatched',
     timestamp: new Date().toISOString(),
     stores: competitors.length,
-    results: summary,
+    dispatched,
+    note: 'Each store runs as a separate function with 300s budget. Check scraping_logs for results.',
   });
 }

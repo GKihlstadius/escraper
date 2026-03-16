@@ -5,6 +5,10 @@
       "schedule": "0 5,11,17,23 * * *"
     },
     {
+      "path": "/api/cron/scrape-store?recs=1",
+      "schedule": "10 5,11,17,23 * * *"
+    },
+    {
       "path": "/api/snapshot",
       "schedule": "0 15 * * *"
     }
