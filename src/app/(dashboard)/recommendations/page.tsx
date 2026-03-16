@@ -284,7 +284,6 @@ function PriceDiffRow({ diff: d, type }: { diff: PriceDiff; type: 'expensive' | 
               href={d.url}
               target="_blank"
               rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
               className="text-zinc-300 hover:text-zinc-500 transition-colors shrink-0"
             >
               <ExternalLink className="h-3.5 w-3.5" />
