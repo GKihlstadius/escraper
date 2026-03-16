@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-export const maxDuration = 60; // Dispatcher only needs ~10s, but allow headroom
+export const maxDuration = 30; // Dispatcher is fast — just fires off requests
 
 export async function GET(request: NextRequest) {
   // Verify cron secret
@@ -26,39 +26,31 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: 'No active competitors' });
   }
 
-  // Fan out: trigger a separate serverless function per store
-  // Each gets its own 300s budget instead of sharing one
+  // Fan out: fire-and-forget a separate serverless function per store.
+  // Each gets its own 300s budget. We don't await — results are in scraping_logs.
   const baseUrl = request.nextUrl.origin;
   const secret = process.env.CRON_SECRET;
 
-  const results = await Promise.allSettled(
-    competitors.map(async (c) => {
-      const res = await fetch(
-        `${baseUrl}/api/cron/scrape-store?id=${c.id}`,
-        {
-          headers: { Authorization: `Bearer ${secret}` },
-          signal: AbortSignal.timeout(295_000),
-        }
-      );
-      const data = await res.json();
-      return { competitorId: c.id, name: c.name, ...data };
-    })
-  );
+  const dispatched: string[] = [];
+  for (const c of competitors) {
+    // Fire-and-forget: don't await the response
+    fetch(`${baseUrl}/api/cron/scrape-store?id=${c.id}`, {
+      headers: { Authorization: `Bearer ${secret}` },
+    }).catch(() => {}); // ignore network errors on dispatch
+    dispatched.push(c.name);
+  }
 
-  // Trigger recommendations after all scrapes complete
+  // Also fire recommendations (will run after the scrape-store functions finish their DB writes)
+  // Delay slightly so scrapes have time to save data
   fetch(`${baseUrl}/api/cron/scrape-store?recs=1`, {
     headers: { Authorization: `Bearer ${secret}` },
-  }).catch(() => {}); // fire-and-forget
-
-  const summary = results.map((r) => {
-    if (r.status === 'fulfilled') return r.value;
-    return { error: r.reason?.message || 'Unknown error' };
-  });
+  }).catch(() => {});
 
   return NextResponse.json({
     message: 'Scraping dispatched',
     timestamp: new Date().toISOString(),
-    stores: competitors.length,
-    results: summary,
+    stores: dispatched.length,
+    dispatched,
+    note: 'Each store runs as a separate function with 300s budget. Check scraping_logs for results.',
   });
 }
