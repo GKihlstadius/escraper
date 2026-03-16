@@ -44,19 +44,22 @@ export function AIPanel({ panelState, onStateChange }: AIPanelProps) {
     }
   }, [panelState]);
 
-  async function handleSend() {
-    const message = input.trim();
+  async function handleSend(overrideMessage?: string) {
+    const message = (overrideMessage || input).trim();
     if (!message || loading) return;
 
     setInput('');
-    setMessages((prev) => [...prev, { role: 'user', content: message }]);
+    const newMessages: Message[] = [...messages, { role: 'user', content: message }];
+    setMessages(newMessages);
     setLoading(true);
 
     try {
+      // Send conversation history (last 10 messages) for context
+      const history = newMessages.slice(-10).map(m => ({ role: m.role, content: m.content }));
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ message, history }),
       });
 
       const data = await res.json();
@@ -183,6 +186,25 @@ export function AIPanel({ panelState, onStateChange }: AIPanelProps) {
             )}
           </div>
         ))}
+        {/* Quick action chips — show only at start */}
+        {messages.length <= 1 && !loading && (
+          <div className="flex flex-wrap gap-2 pt-1">
+            {[
+              'Vilka produkter bör jag sänka priset på?',
+              'Ge mig en sammanfattning av prisläget',
+              'Vilka produkter kan jag höja priset på?',
+              'Vilka konkurrenter har ändrat priser senast?',
+            ].map((q) => (
+              <button
+                key={q}
+                onClick={() => handleSend(q)}
+                className="text-xs px-3 py-1.5 rounded-full border border-[#7C3AED]/20 text-[#7C3AED] hover:bg-[#7C3AED]/5 transition-colors"
+              >
+                {q}
+              </button>
+            ))}
+          </div>
+        )}
         {loading && (
           <div className="flex gap-3">
             <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[#7C3AED]/20 to-[#EC4899]/20 flex items-center justify-center">
@@ -213,7 +235,7 @@ export function AIPanel({ panelState, onStateChange }: AIPanelProps) {
             rows={1}
           />
           <Button
-            onClick={handleSend}
+            onClick={() => handleSend()}
             disabled={loading || !input.trim()}
             size="icon"
             className="h-11 w-11 rounded-xl bg-gradient-to-br from-[#7C3AED] to-[#EC4899] hover:opacity-90 transition-opacity flex-shrink-0"

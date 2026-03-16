@@ -144,6 +144,7 @@ const MODEL_STRIP_WORDS = [
   'barnvagn', 'duovagn', 'sittvagn', 'syskonvagn', 'joggingvagn',
   'liggvagn', 'sulky', 'buggy', 'kombivagn', 'barnvagnspaket',
   'vagnspaket', 'paket', 'komplett', 'set',
+  'liggdel', 'sittdel', 'sittbas', 'chassi', 'chassis',
   'babyskydd', 'i-size', 'r129', 'r44',
   'och', 'för', 'till', 'med', 'av', 'den', 'det', 'nya',
   'stroller', 'pushchair', 'pram', 'car', 'seat',
@@ -165,6 +166,11 @@ const PRODUCT_TYPES: Record<string, string> = {
   'bälteskudde': 'bälteskudde',
   'bältesstol': 'bältesstol',
   'babyskydd': 'babyskydd',
+  'liggdel': 'tillbehör',
+  'sittdel': 'tillbehör',
+  'sittbas': 'tillbehör',
+  'chassi': 'tillbehör',
+  'chassis': 'tillbehör',
   'skidor': 'tillbehör',
   'åkpåse': 'tillbehör',
   'regnskydd': 'tillbehör',
@@ -172,6 +178,13 @@ const PRODUCT_TYPES: Record<string, string> = {
   'sufflett': 'tillbehör',
   'mugghållare': 'tillbehör',
   'fotsack': 'tillbehör',
+  'insekt': 'tillbehör',
+  'insektsnät': 'tillbehör',
+  'solskydd': 'tillbehör',
+  'körkåpa': 'tillbehör',
+  'handtag': 'tillbehör',
+  'hjul': 'tillbehör',
+  'madrass': 'tillbehör',
 };
 
 // Detect if a product name indicates a bundle/package
@@ -329,12 +342,13 @@ function parseFromJsonLd(data: Record<string, unknown>, url: string): ParsedProd
 }
 
 function parseFromHtml($: cheerio.CheerioAPI, url: string): ParsedProduct | null {
-  // Common selectors for Swedish e-commerce
-  const nameSelectors = ['h1', '.product-title', '.product-name', '[itemprop="name"]'];
+  // Common selectors for Swedish e-commerce (including My Baby tws-* web components)
+  const nameSelectors = ['h1', '.product-title', '.product-name', '[itemprop="name"]', 'tws-article-name', '.tws-article-name'];
   const priceSelectors = [
     '.PrisREA', '.sale-price', '.campaign-price', '.current-price',
     '.price--current', '[itemprop="price"]', '.product-price .price',
     '.price:not(.old):not(.original)',
+    'tws-article-price', '.tws-article-price', '.tws-price',
   ];
   const originalPriceSelectors = [
     '.PrisORD', '.old-price', '.original-price', '.price--compare-at',

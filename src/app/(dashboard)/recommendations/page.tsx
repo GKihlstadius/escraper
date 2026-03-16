@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import Link from 'next/link';
-import { ArrowRight, TrendingDown, TrendingUp, Minus, ExternalLink } from 'lucide-react';
+import { ArrowRight, TrendingDown, TrendingUp, ExternalLink } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,11 +36,20 @@ export default async function RecommendationsPage() {
   const ownStores = competitors.filter(c => c.is_own_store);
   const ownStoreIds = new Set(ownStores.map(c => c.id));
 
-  // Get latest prices per variant+competitor
-  const { data: allPrices } = await supabase
-    .from('product_prices')
-    .select('variant_id, competitor_id, price, url')
-    .order('scraped_at', { ascending: false });
+  // Get latest prices per variant+competitor (paginated to overcome 1000-row limit)
+  let allPrices: { variant_id: string; competitor_id: string; price: number; url: string | null }[] = [];
+  let offset = 0;
+  while (true) {
+    const { data } = await supabase
+      .from('product_prices')
+      .select('variant_id, competitor_id, price, url')
+      .order('scraped_at', { ascending: false })
+      .range(offset, offset + 999);
+    if (!data || data.length === 0) break;
+    allPrices = allPrices.concat(data);
+    offset += 1000;
+    if (data.length < 1000) break;
+  }
 
   // Keep only latest price per variant+competitor
   const latestPrices = new Map<string, { price: number; url: string | null }>();
@@ -226,7 +235,6 @@ function PriceDiffRow({ diff: d, type }: { diff: PriceDiff; type: 'expensive' | 
               href={d.url}
               target="_blank"
               rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
               className="text-zinc-300 hover:text-zinc-500 transition-colors shrink-0"
             >
               <ExternalLink className="h-3.5 w-3.5" />

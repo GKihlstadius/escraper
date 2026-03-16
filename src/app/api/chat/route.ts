@@ -10,7 +10,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { message } = await request.json();
+  const { message, history } = await request.json();
   if (!message) {
     return NextResponse.json({ error: 'Message required' }, { status: 400 });
   }
@@ -111,6 +111,20 @@ REGLER:
 
 ${context}`;
 
+  // Build messages array with conversation history for multi-turn context
+  const chatMessages: Array<{ role: string; content: string }> = [
+    { role: 'system', content: systemPrompt },
+  ];
+  if (Array.isArray(history) && history.length > 0) {
+    // Add prior messages (skip the system greeting)
+    for (const h of history.slice(0, -1)) {
+      if (h.role === 'user' || h.role === 'assistant') {
+        chatMessages.push({ role: h.role, content: h.content });
+      }
+    }
+  }
+  chatMessages.push({ role: 'user', content: message });
+
   const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -119,10 +133,7 @@ ${context}`;
     },
     body: JSON.stringify({
       model: 'llama-3.3-70b-versatile',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: message },
-      ],
+      messages: chatMessages,
       temperature: 0.2,
       max_tokens: 1500,
     }),

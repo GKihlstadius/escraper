@@ -66,7 +66,7 @@ export async function scrapeCompetitor(competitorId: string, timeBudgetMs?: numb
   try {
     // Step 1: Discover product URLs
     const isOwn = competitor.is_own_store;
-    const urlLimit = isOwn ? 1500 : 500;
+    const urlLimit = isOwn ? 1500 : 1000;
     let urls: string[] = [];
     if (competitor.sitemap_url) {
       urls = await discoverProductUrls(competitor.sitemap_url, urlLimit, isOwn);

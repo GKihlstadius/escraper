@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import {
-  LayoutDashboard, Package, Bell, Database,
+  LayoutDashboard, Package, Bell, Database, TrendingUp,
   LogOut, RefreshCw, X, ChevronsLeft, ChevronsRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils';
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/products', label: 'Produkter', icon: Package },
+  { href: '/recommendations', label: 'Prisanalys', icon: TrendingUp },
   { href: '/alerts', label: 'Larm', icon: Bell },
   { href: '/database', label: 'Databas', icon: Database },
 ];
