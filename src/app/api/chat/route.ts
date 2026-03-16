@@ -220,35 +220,52 @@ Exempel-svar:
         memories.push({ category: m[1], content: m[2] });
       }
     }
-    if (!Array.isArray(memories) || memories.length === 0) return;
+    if (!Array.isArray(memories) || memories.length === 0) {
+      console.log('[memory] No memories extracted from response:', content);
+      return;
+    }
+
+    console.log('[memory] Extracted', memories.length, 'memories:', JSON.stringify(memories));
 
     const validCategories = ['fact', 'preference', 'decision', 'context'];
     for (const mem of memories.slice(0, 2)) {
       if (!mem.content || !validCategories.includes(mem.category)) continue;
 
       // Check for duplicate/similar memories
-      const { data: existing } = await supabase
+      const { data: existing, error: fetchErr } = await supabase
         .from('chat_memories')
         .select('id, content')
         .eq('user_id', userId)
         .eq('category', mem.category);
+
+      if (fetchErr) {
+        console.log('[memory] Error fetching existing:', fetchErr.message);
+      }
 
       const isDuplicate = existing?.some((e: { id: string; content: string }) =>
         e.content.toLowerCase().includes(mem.content.toLowerCase().slice(0, 30)) ||
         mem.content.toLowerCase().includes(e.content.toLowerCase().slice(0, 30))
       );
 
-      if (isDuplicate) continue;
+      if (isDuplicate) {
+        console.log('[memory] Skipping duplicate:', mem.content);
+        continue;
+      }
 
-      await supabase.from('chat_memories').insert({
+      const { error: insertErr } = await supabase.from('chat_memories').insert({
         user_id: userId,
         category: mem.category,
         content: mem.content,
         source_conversation_id: conversationId,
       });
+      if (insertErr) {
+        console.log('[memory] Insert error:', insertErr.message, insertErr.code);
+      } else {
+        console.log('[memory] Saved:', mem.category, '-', mem.content);
+      }
     }
-  } catch {
-    // Silent fail — memory extraction is non-critical
+  } catch (err) {
+    console.log('[memory] extractMemories failed:', err instanceof Error ? err.message : err);
   }
 }
 
